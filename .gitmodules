@@ -1,0 +1,3 @@
+[submodule "GeslaDataset"]
+	path = GeslaDataset
+	url = https://github.com/philiprt/GeslaDataset.git
