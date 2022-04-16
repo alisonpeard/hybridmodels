@@ -37,6 +37,4 @@ vignettes/*.pdf
 
 # R Environment Variables
 .Renviron
-idai/beira/outdata/featureset.cpg idai/beira/outdata/featureset.dbf idai/beira/outdata/featureset.prj idai/beira/outdata/featureset.shp idai/beira/outdata/featureset.shx
-**/featureset.*
 idai/beira/indata
