@@ -28,6 +28,7 @@ dependencies:
   - scipy                   # scientific computing
   - geopandas
   - dask-geopandas
+  - richdem
   - pyogrio                 # required for dask_geopandas.read_file()
   # APIs
   - earthengine-api         # access Google Earth Engine

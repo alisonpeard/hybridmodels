@@ -1,5 +1,5 @@
 """
-Calculate overlap for user input grid and polygon ESRI shapefile.
+Command line utility to calculate overlap for user input grid and polygon ESRI shapefile.
 
 References:
 -----------
