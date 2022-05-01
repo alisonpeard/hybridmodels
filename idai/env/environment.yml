@@ -19,7 +19,6 @@ dependencies:
   - rasterstats             # summarise raster datasets
   - geopy                   # get geocodes for locations
   - cartopy                 # plotting maps
-  - folium                  # plot interactive map
   - descartes               # shapely / GeoJSON to matplotlib patches
   - folium                  # for interactive maps
   - geojson                 # manipulate geoJSONs
@@ -37,7 +36,7 @@ dependencies:
   - ipykernel               # attach environment to Jupyter notebook functionality
   - notebook                # Jupyter notebook
   # Machine learning
-  # - tensorflow
+  - tensorflow
 
 # conda env create -f environment.yml
 # python -m ipykernel install --user --n hybridmodels
