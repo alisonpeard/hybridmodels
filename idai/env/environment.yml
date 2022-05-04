@@ -1,6 +1,8 @@
 name: hybridmodels
+# If issues with pyg use wheels installation described in pyg docs
 channels:
   - conda-forge
+  - pyg
   - defaults
 dependencies:
   - python
@@ -36,7 +38,9 @@ dependencies:
   - ipykernel               # attach environment to Jupyter notebook functionality
   - notebook                # Jupyter notebook
   # Machine learning
-  - tensorflow
+  - tensorflow              # keras submodule
+  - pytorch                 # neural networks
+  - pyg                     # graph neural networks
 
 # conda env create -f environment.yml
 # python -m ipykernel install --user --n hybridmodels
