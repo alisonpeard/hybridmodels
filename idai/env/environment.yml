@@ -40,9 +40,10 @@ dependencies:
   # Machine learning
   - tensorflow              # keras submodule
   - pytorch                 # neural networks
-  - pyg                     # graph neural networks
+  # - pyg                     # graph neural networks
 
 # conda env create -f environment.yml
+# conda activate hybridmodels
 # python -m ipykernel install --user --n hybridmodels
 
 # conda env remove -n hybridmodels

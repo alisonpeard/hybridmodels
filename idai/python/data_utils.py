@@ -12,7 +12,7 @@ from rasterio.merge import merge
 import matplotlib.pyplot as plt
 
 # GENERAL
-def make_grid(xmin, ymin, xmax, ymax):
+def make_grid(xmin, ymin, xmax, ymax, length=1000, wide=1000):
     """ 
     Function for creating a grid using polygon objects.
     
@@ -31,9 +31,6 @@ def make_grid(xmin, ymin, xmax, ymax):
     References:
     ..[1] Muckley (2020)
     """
-    length = 1000
-    wide = 1000
-
 
     cols = list(np.arange(xmin, xmax, wide))
     rows = list(np.arange(ymin, ymax, length))
