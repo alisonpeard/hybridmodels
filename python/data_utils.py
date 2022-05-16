@@ -83,9 +83,141 @@ def get_grid_intersects(gdf, grid):
     
     return grid
 
+#--------------------------------------------------------------------------------------------------------
+# IBTRaCs wind fields
+def haversine(lon1, lat1, lon2_lst, lat2_lst):
+    """Code from J. Verschuur. Haversine distance in km."""
+    lon2_arr = np.array(lon2_lst)
+    lat2_arr = np.array(lat2_lst)
+
+    # convert degrees to radians
+    lon1 = np.deg2rad(lon1)
+    lat1 = np.deg2rad(lat1)
+    lon2_arr = np.deg2rad(lon2_arr)
+    lat2_arr = np.deg2rad(lat2_arr)
+
+    # formula
+    dlon = lon2_arr - lon1
+    dlat = lat2_arr - lat1
+    a = np.sin(dlat / 2) ** 2 + np.cos(lat1) * np.cos(lat2_arr) * np.sin(dlon / 2) ** 2
+    c = 2 * np.arcsin(np.sqrt(a))
+    r_e = 6371
+    return c * r_e
+
+def holland_wind_field(r, wind, pressure, pressure_env, distance, lat):
+    """Code from J. Verschuur. Uses different rho-value to Holland (1980).
+    
+    Parameters:
+    -----------
+    r : float
+        radius of maximum winds (km).
+    wind : float
+        wind speed (m / s)
+    pressure : float
+        central pressure (mb)
+    pressure_env : float
+        ambient pressure (mb), often taken as value of first anticyclonic isobar
+        Holland (1980).
+    distance : float
+        distance from point to storm centre (km)
+    latitude : float
+    
+    """
+    # change distance and radius to meters
+    distance = distance * 1000
+    r = r * 1000
+    rho = 1.10
+    f = np.abs(1.45842300 * 10 ** -4 * np.sin(lat))
+    e = 2.71828182846
+    # p_drop = 2*wind**2
+    p_drop = (pressure_env - pressure) * 100
+    B = rho * e * wind ** 2 / p_drop
+    Vg = (
+        np.sqrt(
+            ((r / distance) ** B) * (wind ** 2) * np.exp(1 - (r / distance) ** B)
+            + (r ** 2) * (f ** 2) / 4
+        )
+        - (r * f) / 2
+    )
+    return Vg
+
+def knots_to_mps(x):
+    return x * 0.514
+
+def nmile_to_km(x):
+    return x * 1.852
+
+# climada source code: https://climada-python.readthedocs.io/en/stable/_modules/climada/hazard/tc_tracks.html
+IBTRACS_AGENCIES = [
+    'usa', 'tokyo', 'newdelhi', 'reunion', 'bom', 'nadi', 'wellington',
+    'cma', 'hko', 'ds824', 'td9636', 'td9635', 'neumann', 'mlc',
+]
+
+IBTRACS_USA_AGENCIES = [
+    'atcf', 'cphc', 'hurdat_atl', 'hurdat_epa', 'jtwc_cp', 'jtwc_ep', 'jtwc_io',
+    'jtwc_sh', 'jtwc_wp', 'nhc_working_bt', 'tcvightals', 'tcvitals'
+]
+
+
+IBTRACS_AGENCY_1MIN_WIND_FACTOR = {
+    "usa": [1.0, 0.0],
+    "tokyo": [0.60, 23.3],
+    "newdelhi": [1.0, 0.0],
+    "reunion": [0.88, 0.0],
+    "bom": [0.88, 0.0],
+    "nadi": [0.88, 0.0],
+    "wellington": [0.88, 0.0],
+    'cma': [0.871, 0.0],
+    'hko': [0.9, 0.0],
+    'ds824': [1.0, 0.0],
+    'td9636': [1.0, 0.0],
+    'td9635': [1.0, 0.0],
+    'neumann': [0.88, 0.0],
+    'mlc': [1.0, 0.0],
+}
+"""Scale and shift used by agencies to convert their internal Dvorak 1-minute sustained winds to
+the officially reported values that are in IBTrACS. From Table 1 in:
+
+Knapp, K.R., Kruk, M.C. (2010): Quantifying Interagency Differences in Tropical Cyclone Best-Track
+Wind Speed Estimates. Monthly Weather Review 138(4): 1459–1473.
+https://library.wmo.int/index.php?lvl=notice_display&id=135"""
+
+WIND_COLS = ['WMO_WIND',
+ 'USA_WIND',
+ 'CMA_WIND',
+ 'HKO_WIND',
+ 'NEWDELHI_WIND',
+ 'REUNION_WIND',
+ 'BOM_WIND',
+ 'NADI_WIND',
+ 'WELLINGTON_WIND',
+ 'DS824_WIND',
+ 'TD9636_WIND',
+ 'TD9635_WIND',
+ 'NEUMANN_WIND',
+ 'MLC_WIND']
+
+
+STORM_1MIN_WIND_FACTOR = 0.88
+"""Scaling factor used in Bloemendaal et al. (2020) to convert 1-minute sustained wind speeds to
+10-minute sustained wind speeds.
+
+Bloemendaal et al. (2020): Generation of a global synthetic tropical cyclone hazard
+dataset using STORM. Scientific Data 7(1): 40.""";
+
+DEF_ENV_PRESSURE = 1010
+"""Default environmental pressure"""
+
+# Basin-specific default environmental pressure
+BASIN_ENV_PRESSURE = {
+    '': DEF_ENV_PRESSURE,
+    'EP': 1010, 'NA': 1010, 'SA': 1010,
+    'NI': 1005, 'SI': 1005, 'WP': 1005,
+    'SP': 1004,
+}
 
 #--------------------------------------------------------------------------------------------------------
-# FABDEM
+# FABDEM (no longer using)
 def download_fabdem(aoi, save_dir, new=False):
     """
     Download FABDEM file covering area of interest (AOI).
