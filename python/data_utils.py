@@ -175,6 +175,9 @@ IBTRACS_AGENCY_1MIN_WIND_FACTOR = {
     'td9635': [1.0, 0.0],
     'neumann': [0.88, 0.0],
     'mlc': [1.0, 0.0],
+    'hurdat_atl' : [0.88, 0.0],
+    'hurdat_epa' : [0.88, 0.0],
+    'atcf' : [0.88, 0.0]
 }
 """Scale and shift used by agencies to convert their internal Dvorak 1-minute sustained winds to
 the officially reported values that are in IBTrACS. From Table 1 in:
