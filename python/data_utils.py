@@ -1,3 +1,7 @@
+"""
+Functions to help processing data.
+"""
+
 from os.path import join
 from pathlib import Path
 import requests
@@ -69,17 +73,16 @@ def get_grid_intersects(gdf, grid):
     ..[1] Muckley (2020)
             https://github.com/leomuckley/Multi-Input-ConvLSTM
     """
-    poly = gpd.sjoin(grid, gdf, how='left')
-    total_list = []
+    gdf = gdf.unary_union
+    overlap_list = []
     for grd in tqdm(grid.geometry):
         total = 0
-        for ply in gdf.geometry:
-            if ply.intersects(grd):
-                poly = (ply.intersection(grd)).area / grd.area
-                total = total + poly
-        # print(total)
-        total_list.append(total)
-    grid.loc[:, 'floodfrac'] = total_list
+        if gdf.intersects(grd):
+            frac = (gdf.intersection(grd)).area / grd.area
+            total += frac
+            assert total <= 1  # sanity check
+        overlap_list.append(total)
+    grid.loc[:, 'floodfrac'] = overlap_list
     
     return grid
 
