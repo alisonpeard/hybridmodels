@@ -162,7 +162,6 @@ IBTRACS_USA_AGENCIES = [
     'jtwc_sh', 'jtwc_wp', 'nhc_working_bt', 'tcvightals', 'tcvitals'
 ]
 
-
 IBTRACS_AGENCY_1MIN_WIND_FACTOR = {
     "usa": [1.0, 0.0],
     "tokyo": [0.60, 23.3],
@@ -177,17 +176,34 @@ IBTRACS_AGENCY_1MIN_WIND_FACTOR = {
     'td9636': [1.0, 0.0],
     'td9635': [1.0, 0.0],
     'neumann': [0.88, 0.0],
+    'mlc': [1.0, 0.0]
+}
+"""Scale and shift used by agencies to convert their internal Dvorak 1-minute sustained winds to the officially reported values that are in IBTrACS. From Table 1 in: Knapp, K.R., Kruk, M.C. (2010): Quantifying Interagency Differences in Tropical Cyclone Best-Track Wind Speed Estimates. Monthly Weather Review 138(4): 1459–1473. https://library.wmo.int/index.php?lvl=notice_display&id=135
+MSW1 = MSW10/scale - shift"""
+
+# using this to derive 10 min wind factos
+IBTRACS_AGENCY_10MIN_WIND_FACTOR = {
+    "usa": [1.0, 0.0],
+    "tokyo": [1.0, 0.0],
+    "newdelhi": [0.88, 0.0],  # MSW3=MSW1 in Kruk paper
+    "reunion": [1.0, 0.0],
+    "bom": [1.0, 0.0],
+    "nadi": [1.0, 0.0],
+    "wellington": [1.0, 0.0],
+    'cma': [1.0, 0.0],
+    'hko': [1.0, 0.0],
+    'ds824': [1.0, 0.0],
+    'td9636': [1.0, 0.0],
+    'td9635': [1.0, 0.0],
+    'neumann': [1.0, 0.0],
     'mlc': [1.0, 0.0],
     'hurdat_atl' : [0.88, 0.0],
     'hurdat_epa' : [0.88, 0.0],
-    'atcf' : [0.88, 0.0]
+    'atcf' : [0.88, 0.0],
+    'cphc': [0.88, 0.0],
+    
 }
-"""Scale and shift used by agencies to convert their internal Dvorak 1-minute sustained winds to
-the officially reported values that are in IBTrACS. From Table 1 in:
-
-Knapp, K.R., Kruk, M.C. (2010): Quantifying Interagency Differences in Tropical Cyclone Best-Track
-Wind Speed Estimates. Monthly Weather Review 138(4): 1459–1473.
-https://library.wmo.int/index.php?lvl=notice_display&id=135"""
+"""MSW10 = MSW1*scale + shift"""
 
 WIND_COLS = ['WMO_WIND',
  'USA_WIND',
