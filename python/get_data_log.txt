@@ -1,0 +1,63 @@
+Y
+2022-06-16 12:34:14.398986: issue with gombe, mossuril: Length of values (4096) does not match length of index (458)
+2022-06-16 12:34:59.114732: issue with rai, hinunangan: Length of values (4096) does not match length of index (35)
+2022-06-16 12:35:41.234265: issue with batsirai, tsiribihina: Length of values (4096) does not match length of index (1357)
+2022-06-16 12:36:25.426861: issue with batsirai, mananjary: Length of values (4096) does not match length of index (782)
+2022-06-16 12:36:55.779810: issue with iota, loweraguanbasin: Length of values (4096) does not match length of index (401)
+2022-06-16 12:38:00.084588: issue with roanu, barguna: Length of values (4096) does not match length of index (1118)
+2022-06-16 12:39:39.929302: issue with roanu, coxsbazar: Length of values (4096) does not match length of index (3193)
+2022-06-16 12:50:24.412300: issue with gombe, mossuril: Length of values (4096) does not match length of index (458)
+2022-06-16 12:51:24.315788: issue with rai, hinunangan: Length of values (4096) does not match length of index (35)
+2022-06-16 12:53:35.870613: issue with batsirai, tsiribihina: Image.reduceRegions: The default WGS84 projection is invalid for aggregations. Specify a scale or crs & crs_transform.
+2022-06-16 12:54:28.614962: issue with batsirai, mananjary: Image.reduceRegions: The default WGS84 projection is invalid for aggregations. Specify a scale or crs & crs_transform.
+2022-06-16 12:55:57.085377: issue with iota, loweraguanbasin: Image.reduceRegions: The default WGS84 projection is invalid for aggregations. Specify a scale or crs & crs_transform.
+2022-06-16 12:57:12.036356: issue with roanu, barguna: Image.reduceRegions: The default WGS84 projection is invalid for aggregations. Specify a scale or crs & crs_transform.
+2022-06-16 12:59:03.857845: issue with roanu, coxsbazar: Image.reduceRegions: The default WGS84 projection is invalid for aggregations. Specify a scale or crs & crs_transform.
+2022-06-16 13:00:10.520710: issue with roanu, lalmohan: Image.reduceRegions: The default WGS84 projection is invalid for aggregations. Specify a scale or crs & crs_transform.
+2022-06-16 13:01:51.792000: issue with roanu, satkania: Image.reduceRegions: The default WGS84 projection is invalid for aggregations. Specify a scale or crs & crs_transform.
+2022-06-16 13:02:51.593934: issue with roanu, chittagong: Image.reduceRegions: The default WGS84 projection is invalid for aggregations. Specify a scale or crs & crs_transform.
+2022-06-16 13:03:59.023577: issue with molave, hue: Image.reduceRegions: The default WGS84 projection is invalid for aggregations. Specify a scale or crs & crs_transform.
+2022-06-16 13:05:22.018480: issue with nakri, tuyhoa: Image.reduceRegions: The default WGS84 projection is invalid for aggregations. Specify a scale or crs & crs_transform.
+2022-06-16 13:08:27.453406: issue with irma, tampasouth: ('invalid_grant: Token has been expired or revoked.', {'error': 'invalid_grant', 'error_description': 'Token has been expired or revoked.'})
+2022-06-16 13:08:43.231444: issue with irma, tampanorth: ('invalid_grant: Token has been expired or revoked.', {'error': 'invalid_grant', 'error_description': 'Token has been expired or revoked.'})
+2022-06-16 13:08:46.036132: issue with irma, jacksonvillesouth: ('invalid_grant: Token has been expired or revoked.', {'error': 'invalid_grant', 'error_description': 'Token has been expired or revoked.'})
+2022-06-16 13:08:46.574116: issue with irma, jacksonvillenorth: 'NoneType' object has no attribute 'intersects'
+2022-06-17 09:24:35.748404: issue with gombe, mossuril: Length of values (4096) does not match length of index (458)
+2022-06-17 09:24:57.521968: issue with rai, hinunangan: Length of values (4096) does not match length of index (35)
+2022-06-17 09:25:23.748854: issue with batsirai, tsiribihina: Image.reduceRegions: The default WGS84 projection is invalid for aggregations. Specify a scale or crs & crs_transform.
+2022-06-17 09:25:48.170660: issue with batsirai, mananjary: Image.reduceRegions: The default WGS84 projection is invalid for aggregations. Specify a scale or crs & crs_transform.
+2022-06-17 09:26:12.587953: issue with iota, loweraguanbasin: Image.reduceRegions: The default WGS84 projection is invalid for aggregations. Specify a scale or crs & crs_transform.
+2022-06-17 09:27:03.017818: issue with roanu, barguna: Image.reduceRegions: The default WGS84 projection is invalid for aggregations. Specify a scale or crs & crs_transform.
+2022-06-17 09:31:43.378636: issue with gombe, mossuril: Length of values (4096) does not match length of index (458)
+2022-06-17 09:32:04.374210: issue with rai, hinunangan: Length of values (4096) does not match length of index (35)
+2022-06-17 09:32:31.224403: issue with batsirai, tsiribihina: Image.reduceRegions: The default WGS84 projection is invalid for aggregations. Specify a scale or crs & crs_transform.
+2022-06-17 09:32:56.447030: issue with batsirai, mananjary: Image.reduceRegions: The default WGS84 projection is invalid for aggregations. Specify a scale or crs & crs_transform.
+2022-06-17 09:33:21.677472: issue with iota, loweraguanbasin: Image.reduceRegions: The default WGS84 projection is invalid for aggregations. Specify a scale or crs & crs_transform.
+2022-06-17 09:34:15.548428: issue with gombe, mossuril: Length of values (4096) does not match length of index (458)
+2022-06-17 09:43:30.986841: issue with gombe, mossuril: 
+2022-06-17 09:44:05.036773: issue with gombe, mossuril: User-defined methods must return a value
+2022-06-17 09:44:27.155517: issue with rai, hinunangan: User-defined methods must return a value
+2022-06-17 09:44:53.576568: issue with batsirai, tsiribihina: Image.reduceRegions: The default WGS84 projection is invalid for aggregations. Specify a scale or crs & crs_transform.
+2022-06-17 09:45:18.079775: issue with batsirai, mananjary: Image.reduceRegions: The default WGS84 projection is invalid for aggregations. Specify a scale or crs & crs_transform.
+2022-06-17 09:45:42.112304: issue with iota, loweraguanbasin: Image.reduceRegions: The default WGS84 projection is invalid for aggregations. Specify a scale or crs & crs_transform.
+2022-06-17 09:46:34.538584: issue with roanu, barguna: Image.reduceRegions: The default WGS84 projection is invalid for aggregations. Specify a scale or crs & crs_transform.
+2022-06-17 09:48:07.634482: issue with roanu, coxsbazar: Image.reduceRegions: The default WGS84 projection is invalid for aggregations. Specify a scale or crs & crs_transform.
+2022-06-17 09:48:50.124261: issue with roanu, lalmohan: Image.reduceRegions: The default WGS84 projection is invalid for aggregations. Specify a scale or crs & crs_transform.
+2022-06-17 11:36:49.586625: issue with gombe, mossuril: float division by zero
+2022-06-17 11:47:46.059444: issue with gombe, mossuril: 'GeoDataFrame' object has no attribute 'Index'
+2022-06-17 11:47:46.791921: issue with rai, hinunangan: 'GeoDataFrame' object has no attribute 'Index'
+2022-06-17 11:47:47.606250: issue with batsirai, tsiribihina: 'GeoDataFrame' object has no attribute 'Index'
+2022-06-17 11:47:48.305341: issue with batsirai, mananjary: 'GeoDataFrame' object has no attribute 'Index'
+2022-06-17 11:47:48.993856: issue with iota, loweraguanbasin: 'GeoDataFrame' object has no attribute 'Index'
+2022-06-17 11:47:49.968923: issue with roanu, barguna: 'GeoDataFrame' object has no attribute 'Index'
+2022-06-17 11:47:50.792019: issue with roanu, coxsbazar: 'GeoDataFrame' object has no attribute 'Index'
+2022-06-17 11:47:51.687056: issue with roanu, lalmohan: 'GeoDataFrame' object has no attribute 'Index'
+2022-06-17 11:47:52.527838: issue with roanu, satkania: 'GeoDataFrame' object has no attribute 'Index'
+2022-06-17 11:47:53.480771: issue with roanu, chittagong: 'GeoDataFrame' object has no attribute 'Index'
+2022-06-17 11:47:54.290888: issue with molave, hue: 'GeoDataFrame' object has no attribute 'Index'
+2022-06-17 11:47:55.061264: issue with nakri, tuyhoa: 'GeoDataFrame' object has no attribute 'Index'
+2022-06-17 11:47:56.048912: issue with irma, tampasouth: 'GeoDataFrame' object has no attribute 'Index'
+2022-06-17 11:47:57.040374: issue with irma, tampanorth: 'GeoDataFrame' object has no attribute 'Index'
+2022-06-17 11:47:57.983681: issue with irma, jacksonvillesouth: 'GeoDataFrame' object has no attribute 'Index'
+2022-06-17 11:47:58.818577: issue with irma, jacksonvillenorth: 'GeoDataFrame' object has no attribute 'Index'
+2022-06-17 11:52:37.403818: issue with gombe, mossuril: float division by zero

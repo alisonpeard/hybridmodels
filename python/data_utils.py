@@ -134,6 +134,8 @@ def holland_wind_field(r, wind, pressure, pressure_env, distance, lat):
     e = 2.71828182846
     # p_drop = 2*wind**2
     p_drop = (pressure_env - pressure) * 100
+    if p_drop == 0:  # TODO: review this guy
+        return 0
     B = rho * e * wind ** 2 / p_drop
     Vg = (
         np.sqrt(
@@ -185,7 +187,7 @@ MSW1 = MSW10/scale - shift"""
 IBTRACS_AGENCY_10MIN_WIND_FACTOR = {
     "usa": [1.0, 0.0],
     "tokyo": [1.0, 0.0],
-    "newdelhi": [0.88, 0.0],  # MSW3=MSW1 in Kruk paper
+    "newdelhi": [0.88, 0.0],  # MSW3==MSW1 in Kruk paper
     "reunion": [1.0, 0.0],
     "bom": [1.0, 0.0],
     "nadi": [1.0, 0.0],

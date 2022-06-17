@@ -1,0 +1,46 @@
+name: hydromt-sfincs
+
+channels:
+  - conda-forge
+
+dependencies:
+  - affine
+  - click
+  - black
+  - bottleneck
+  - cartopy # to run examples
+  - dask
+  - descartes # to run examples
+  - entrypoints
+  - ffmpeg  # to run examples (animation)
+  - flit>=3.2
+  # - git  # to install git repositories with pip
+  - gdal>=3.1
+  - geopandas
+  - hydromt>=0.4.5
+  - jupyterlab # to run examples
+  - netcdf4
+  - matplotlib # to run examples
+  - numba
+  - numpy
+  - openpyxl
+  - pandas
+  - pip
+  - pyflwdir>=0.5.5
+  - pygeos>=0.8
+  - python>=3.7
+  - rasterio
+  - requests
+  - scipy
+  - xarray
+  - zarr
+  # - pip:
+  #   - git+https://github.com/Deltares/hydromt.git
+
+# conda env create -f environment3.yml --experimental-solver=libmamba
+# conda activate hydromt-sfincs
+# pip install hydromt-sfincs
+# python -m ipykernel install --user --n hydromt-sfincs
+
+# conda env remove -n sfincs
+# conda info --envs
