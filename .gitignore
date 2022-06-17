@@ -166,4 +166,5 @@ vignettes/*.pdf
 
 # any user-made archive files and the data directory
 *__archive__*
-data/*
+data/feature_stats/*
+ibtracs_*.csv
