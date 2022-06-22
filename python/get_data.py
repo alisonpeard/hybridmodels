@@ -4,7 +4,7 @@ from datetime import datetime
 import pandas as pd
 from event import Event
 
-wd = join("..", "data", "indata_new")
+wd = join("..", "data")
 df = pd.read_csv(join(wd, "current_datasets.csv"))
 
 for i, row in tqdm(df.iterrows()):
