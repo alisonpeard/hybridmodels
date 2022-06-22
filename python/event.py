@@ -163,6 +163,7 @@ class Event:
             service_account = "hybrid-models@hybridmodels-354115.iam.gserviceaccount.com"
             credentials = ee.ServiceAccountCredentials(service_account,
             join("..", "gcloud_service_account", ".hybridmodels-354115-b103a5d09938.json"))
+            import pdb; pdb.set_trace()
             ee.Authenticate(credentials)
             ee.Initialize()
             
