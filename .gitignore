@@ -168,3 +168,4 @@ vignettes/*.pdf
 *__archive__*
 data/*
 ibtracs_*.csv
+python/gcloud_service_account
