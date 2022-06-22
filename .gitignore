@@ -165,7 +165,7 @@ vignettes/*.pdf
 .Renviron
 
 # any user-made archive files and the data directory
-*__archive__*
-data/*
+__archive__/
+data/
 ibtracs_*.csv
-python/gcloud_service_account
+gcloud_service_account
