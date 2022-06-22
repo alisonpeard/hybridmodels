@@ -17,7 +17,7 @@ import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 class Event:
-    
+
     def __init__(self, storm, region, nsubregions, gridsize=500, stagger=0):
         print(f"Setting up storm {storm.capitalize()} Event instance for {region.capitalize()}.")
         self.storm = storm
@@ -31,7 +31,7 @@ class Event:
         self.startdate, self.enddate = [*pd.read_csv(join(self.wd, "event_dates.csv"),
                                    index_col="storm").loc[storm]]
         self.year = int(self.enddate[:4])
-        
+
         self.aoi_pm = [None] * nsubregions
         self.aoi_lonlat = [None] * nsubregions
         self.grid_pm = [None] * nsubregions
@@ -41,12 +41,12 @@ class Event:
         self.location = [None] * nsubregions
         self.grid_ee = [None] * nsubregions
         self.connected_to_gee = -1
-        
+
         grids = []
         for n in self.subregions:
             grids.append(self.make_grid(n))
-        
-        
+
+
     def make_grid(self, subregion):
         geoJSON = literal_eval(pd.read_csv(join(self.wd, "event_geojsons.csv"),
                                            index_col="region").loc[self.region][0])
@@ -65,12 +65,12 @@ class Event:
         print(f"subregion {subregion} area: {aoi_pm.area[0] / (1000 * 1000)} sqkm")
         grid_pm = make_grid(*aoi_pm.total_bounds, length=self.gridsize, wide=self.gridsize)
         grid_lonlat = grid_pm.to_crs("EPSG:4326")
-        
+
         self.aoi_pm[subregion] = aoi_pm
         self.aoi_lonlat[subregion] = aoi_lonlat
         self.grid_pm[subregion] = grid_pm
         self.grid_lonlat[subregion] = grid_lonlat
-        
+
     def get_floodfile(self, subregion, viz=True):
         indir = self.indir
         flood = gpd.read_file(join(self.indir, "flood.shp")).to_crs('EPSG:4326')
@@ -81,7 +81,7 @@ class Event:
         else:
             trueflood = flood
         self.flood = trueflood
-        
+
         if viz:
         # plot flood data
             fig, ax = plt.subplots(1, figsize=(10, 5))
@@ -91,7 +91,7 @@ class Event:
             self.grid_lonlat[subregion].boundary.plot(color="red", ax=ax, linewidth=0.02)
             self.aoi_lonlat[subregion].boundary.plot(color="red", ax=ax)
             ax.set_title(f"Flood in {self.region}_{subregion}");
-            
+
     def get_gdf(self, subregion, recalculate=False):
         """Load pre-existing gdf or create one if recalculating or doesn't exist."""
         grid_lonlat = self.grid_lonlat[subregion]
@@ -119,17 +119,17 @@ class Event:
             feature_gdf = feature_gdf.set_crs("EPSG:4326")
             self.feature_gdf[subregion] = feature_gdf
             self.save_gdf(subregion)
-            
+
     def save_gdf(self, subregion):
         """Save/update the GeoDataFrame as a shapefile."""
         file = join(self.indir, f'feature_stats_{subregion}_{self.stagger}.shp')
         self.feature_gdf[subregion].to_file(file)
         print(f"Saved as {file}...")
-            
+
     def get_flood(self, subregion, recalculate=False, viz=True):
         self.get_gdf(subregion, recalculate=recalculate)
         self.get_floodfile(subregion)
-        
+
         feature_gdf = self.feature_gdf[subregion]
 
         if "floodfrac" not in feature_gdf or recalculate:
@@ -138,19 +138,19 @@ class Event:
             aoi_lonlat  = self.aoi_lonlat[subregion]
             grid_pm = self.grid_pm[subregion]
             flood = gpd.clip(flood, aoi_lonlat)
-            flood_pm = flood.to_crs("EPSG:3857") 
+            flood_pm = flood.to_crs("EPSG:3857")
             floodfrac_gdf = get_grid_intersects(flood_pm, grid_pm)
 
             # save the feature_stats shapefile with flood fraction
             feature_gdf["floodfrac"] = floodfrac_gdf["floodfrac"]
             self.feature_gdf[subregion] = feature_gdf
             self.save_gdf(subregion)
-        
+
         if viz:
             # plot output
             fig, ax = plt.subplots(1, 1)
             self.feature_gdf[subregion].plot(column="floodfrac", cmap="YlGnBu", ax=ax, legend=True);
-            
+
     def start_gee(self, subregion):
         # workaround to solve conflict with collections
         print("Connecting to Google Earth Engine...\n")
@@ -161,17 +161,14 @@ class Event:
             ee.Initialize()
         except:
             service_account = "hybrid-models@hybridmodels-354115.iam.gserviceaccount.com"
-            credentials = ee.ServiceAccountCredentials(service_account,
-            join("..", "gcloud_service_account", ".hybridmodels-354115-b103a5d09938.json"))
-            import pdb; pdb.set_trace()
-            ee.Authenticate(credentials)
-            ee.Initialize()
-            
+            credentials = ee.ServiceAccountCredentials(service_account, join(gcloud_keys, ".hybridmodels-354115-e71f122c7f06.json"))
+            ee.Initialize(credentials)
+
         self.connected_to_gee = subregion
-            
+
         aoi_lonlat = self.aoi_lonlat[subregion]
         grid_lonlat = self.grid_lonlat[subregion]
-            
+
         # convert aoi to a GEE Feature Collection
         aoi_ee = ee.Geometry.Polygon(aoi_lonlat.geometry[0].__geo_interface__["coordinates"],
                                      proj=ee.Projection('EPSG:4326'))
@@ -186,24 +183,24 @@ class Event:
 
         grid_ee = ee.FeatureCollection(features)
         print(f"Grid size: {grid_ee.size().getInfo()}")
-        
+
         self.aoi_ee[subregion] = aoi_ee
         self.location[subregion] = location
         self.grid_ee[subregion] = grid_ee
-        
+
     def get_gebco(self, subregion, recalculate=False, viz=True):
         """Download GEBCO raster from GEE.
-        
+
         GEBCO bathymetry data: 15 arcseconds (approx. 0.5km)
         """
         if self.feature_gdf[subregion] is None: self.get_gdf(subregion, recalculate=recalculate)
         if "gebco" not in self.feature_gdf[subregion] or recalculate:
             print("Calculating GEBCO bathymetry...")
             feature_gdf = self.feature_gdf[subregion]
-            
+
             if self.connected_to_gee != subregion:
                 self.start_gee(subregion)
-            
+
             aoi_ee = self.aoi_ee[subregion]
             grid_ee = self.grid_ee[subregion]
 
@@ -222,16 +219,16 @@ class Event:
                                                      reducer=ee.Reducer.mean(), scale=self.gridsize)
             gebco_list = mean_gebco.aggregate_array('mean').getInfo()
             feature_gdf["gebco"] = gebco_list
-            
+
             self.feature_gdf[subregion] = feature_gdf
             self.save_gdf(subregion)
-    
+
         if viz:
         # plot output
             fig, ax = plt.subplots(1, 1)
             feature_gdf.plot(column='gebco', cmap="YlGnBu_r", ax=ax, legend=True);
-            
-            
+
+
     def get_fabdem(self, subregion, recalculate=False, viz=True):
         """
         Get FABDEM DTM from Google Earth Engine.
@@ -240,14 +237,14 @@ class Event:
 
         """
         if self.feature_gdf[subregion] is None: self.get_gdf(subregion, recalculate=recalculate)
-        
+
         if "fabdem" not in self.feature_gdf[subregion] or recalculate:
             print("Calculating FABDEM DTM...")
             feature_gdf = self.feature_gdf[subregion]
 
             if self.connected_to_gee != subregion:
                 self.start_gee(subregion)
-            
+
             aoi_ee = self.aoi_ee[subregion]
             grid_ee = self.grid_ee[subregion]
 
@@ -273,32 +270,32 @@ class Event:
             # plot output
             fig, ax = plt.subplots(1, 1)
             feature_gdf.plot(column='fabdem', cmap="terrain", ax=ax, legend=True, vmin=-10)
-    
+
     def get_elevation(self, subregion, recalculate=False, viz=True):
         """Calculate approx. elevation from GEBCO and FABDEM."""
         if self.feature_gdf[subregion] is None: self.get_gdf(subregion, recalculate=recalculate)
-            
+
         if "elevation" not in self.feature_gdf[subregion] or recalculate:
             self.get_gebco(subregion, viz=False)
             self.get_fabdem(subregion, viz=False)
             self.feature_gdf[subregion]['elevation'] = self.feature_gdf[subregion]["gebco"]\
             + self.feature_gdf[subregion]["fabdem"]
             self.save_gdf(subregion)
-            
+
         if viz:
             fig, ax = plt.subplots(1, 1)
             self.feature_gdf[subregion].plot(column='elevation', cmap="terrain", ax=ax, legend=True);
-            
+
     def get_permwater(self, subregion, recalculate=False, viz=True):
         """Get JRC Permanent water from Google Earth Engine.
-        
+
         JRC permanent water dataset: 30 arcseconds (approx. 1km). Needs a better way to impute missing ocean values.
         """
         if self.feature_gdf[subregion] is None: self.get_gdf(subregion, recalculate=recalculate)
-            
+
         print("Recalculating permanent water...")
         feature_gdf = self.feature_gdf[subregion]
-            
+
         if self.connected_to_gee != subregion:
             self.start_gee(subregion)
 
@@ -314,8 +311,8 @@ class Event:
         mean_jrc_permwater = jrc_permwater.reduceRegions(collection=grid_ee,
                                                  reducer=ee.Reducer.mean(), scale=self.gridsize)
         jrc_permwater_list = mean_jrc_permwater.aggregate_array('mean').getInfo()
-        
-        
+
+
         jrc_permwater_list2 = []
         feature_gdf["jrc_permwa"] = jrc_permwater_list
 
@@ -331,7 +328,7 @@ class Event:
             # plot results
             fig, ax = plt.subplots(1, 1)
             self.feature_gdf[subregion].plot(column='jrc_permwa', ax=ax, cmap="YlGnBu", legend=True);
-            
+
     def get_pw_dists(self, subregion, thresh=60, recalculate=False, viz=True):
         """Calculate cell distances and slopes to nearest permanent water."""
 
@@ -391,7 +388,7 @@ class Event:
     def get_precipitation(self, subregion, recalculate=False, viz=True):
         """CHIRPS Daily Precipitation: 0.05 degrees daily"""
 
-        if self.feature_gdf[subregion] is None: 
+        if self.feature_gdf[subregion] is None:
 
 
             _gdf(subregion)
@@ -474,7 +471,7 @@ class Event:
             ax.set_title("Soil organic carbon");
 
 
-    def get_mangroves(self, subregion, recalculate=False, viz=True):     
+    def get_mangroves(self, subregion, recalculate=False, viz=True):
         """Mangrove forests from year 2000 (Giri, 2011)"""
         if self.feature_gdf[subregion] is None: self.get_gdf(subregion, recalculate=recalculate)
 
@@ -678,7 +675,7 @@ class Event:
 
                 # if non-neglible wind append to dataframe
                 if sum(wind_field) > 0:
-                    feature_gdf[f"wnd{date}_{time}"] = wind_field       
+                    feature_gdf[f"wnd{date}_{time}"] = wind_field
 
             timemask = ["wnd" in col for col in feature_gdf.columns]
             timestamps = feature_gdf.columns[timemask]
