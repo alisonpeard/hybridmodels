@@ -160,7 +160,10 @@ class Event:
         try:
             ee.Initialize()
         except:
-            ee.Authenticate()
+            service_account = "hybrid-models@hybridmodels-354115.iam.gserviceaccount.com"
+            credentials = ee.ServiceAccountCredentials(service_account,
+            join("..", "gcloud_service_account", ".hybridmodels-354115-b103a5d09938.json"))
+            ee.Authenticate(credentials)
             ee.Initialize()
             
         self.connected_to_gee = subregion
