@@ -1,0 +1,3 @@
+Delete event line to recalculate it.
+------------------------------------
+gombe_mossuril_0

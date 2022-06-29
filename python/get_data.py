@@ -1,23 +1,28 @@
-from os.path import join
+from os.path import join, dirname
+import logging
+import traceback
 from tqdm import tqdm
 from datetime import datetime
 import pandas as pd
 from event import Event
 
-wd = join("..", "data")
-df = pd.read_csv(join(wd, "current_datasets.csv"))
+def main():
+    bd = dirname(__file__)
+    wd = join(bd, "..", "data")
+    df = pd.read_csv(join(wd, "current_datasets.csv"))
+    logging.basicConfig(filename=join(bd, 'logfiles', 'data_collection.log'), filemode='a', level=logging.INFO)
+    logging.info(f"\n\n\nNew run at time: {datetime.now()}")
 
-for i, row in tqdm(df.iterrows()):
-    try:
-        event = row['event']
-        region = row['region']
-        nsubregions = row['nsubregions']
-        print(f'Caculating {event}, {region} with {nsubregions} subregions')
-        storm = Event(event, region, nsubregions)
-        storm.process_all_subregions(recalculate=True)
-    except Exception as e:
-        with open('get_data_log.txt', 'a') as f:
-            f.write(f'{str(datetime.now())}: issue with {event}, {region}: {e}\n')
-            print(f"Error {e}\n")
-            print(f"Logged, continuing...\n\n")
+    for i, row in tqdm(df.iterrows()):
+        try:
+            event = row['event']
+            region = row['region']
+            nsubregions = row['nsubregions']
+            storm = Event(event, region, nsubregions, wd, bd)
+            storm.process_all_subregions(recalculate=True)
+        except Exception:
+            logging.error(traceback.format_exc())
             continue
+
+if __name__ == "__main__":
+    main()

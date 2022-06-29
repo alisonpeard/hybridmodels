@@ -3,6 +3,7 @@ Functions to help processing data.
 """
 
 from os.path import join
+import logging
 from pathlib import Path
 import requests
 import geopandas as gpd
@@ -18,9 +19,9 @@ import matplotlib.pyplot as plt
 
 # GENERAL
 def make_grid(xmin, ymin, xmax, ymax, length=1000, wide=1000):
-    """ 
+    """
     Function for creating a grid using polygon objects.
-    
+
     Must be in a metres coordinate reference system. Adapted from [1].
     Parameters
     ----------
@@ -47,27 +48,27 @@ def make_grid(xmin, ymin, xmax, ymax, length=1000, wide=1000):
             polygons.append( Polygon([(x,y), (x+wide, y), (x+wide, y-length), (x, y-length)]) )
 
     grid = gpd.GeoDataFrame({'geometry':polygons}).set_crs("EPSG:3857")
-    return grid 
+    return grid
 
 #--------------------------------------------------------------------------------------------------------
 # Flood maps
 def get_grid_intersects(gdf, grid):
-    """ 
+    """
     Function for calculating the fraction of polygon in each gridcell.
-    
+
     Each entry ranges in [0, 1]. Adapted from Muckley (2020) [1].
-    
+
     Parameters
     ----------
     gdf  : GeoDataFrame
     grid : GeoDataFrame
-    
+
     Returns
     -------
     df   : DataFrame
            The resuling DataFrame will contain the fraction of flooding,
            for each of the original coordinates.
-           
+
     Reference:
     ----------
     ..[1] Muckley (2020)
@@ -83,7 +84,7 @@ def get_grid_intersects(gdf, grid):
             assert total <= 1  # sanity check
         overlap_list.append(total)
     grid.loc[:, 'floodfrac'] = overlap_list
-    
+
     return grid
 
 #--------------------------------------------------------------------------------------------------------
@@ -109,7 +110,7 @@ def haversine(lon1, lat1, lon2_lst, lat2_lst):
 
 def holland_wind_field(r, wind, pressure, pressure_env, distance, lat):
     """Code from J. Verschuur. Uses different rho-value to Holland (1980).
-    
+
     Parameters:
     -----------
     r : float
@@ -117,25 +118,26 @@ def holland_wind_field(r, wind, pressure, pressure_env, distance, lat):
     wind : float
         wind speed (m / s)
     pressure : float
-        central pressure (mb)
+        central pressure (mb == hPa)
     pressure_env : float
-        ambient pressure (mb), often taken as value of first anticyclonic isobar
+        ambient pressure (mb == hPa), often taken as value of first anticyclonic isobar
         Holland (1980).
     distance : float
         distance from point to storm centre (km)
     latitude : float
-    
+
     """
-    # change distance and radius to meters
-    distance = distance * 1000
-    r = r * 1000
-    rho = 1.10
+
+    rho = 1.15  # Holland (1980), 1.10 Verschuur
+    lat *= np.pi / 180
+    distance *= 1000
+    r *= 1000
     f = np.abs(1.45842300 * 10 ** -4 * np.sin(lat))
     e = 2.71828182846
     # p_drop = 2*wind**2
     p_drop = (pressure_env - pressure) * 100
-    if p_drop == 0:  # TODO: review this guy
-        return 0
+
+
     B = rho * e * wind ** 2 / p_drop
     Vg = (
         np.sqrt(
@@ -203,7 +205,7 @@ IBTRACS_AGENCY_10MIN_WIND_FACTOR = {
     'hurdat_epa' : [0.88, 0.0],
     'atcf' : [0.88, 0.0],
     'cphc': [0.88, 0.0],
-    
+
 }
 """MSW10 = MSW1*scale + shift"""
 
@@ -249,11 +251,11 @@ BASIN_ENV_PRESSURE = {
 def download_fabdem(aoi, save_dir, new=False):
     """
     Download FABDEM file covering area of interest (AOI).
-    
+
     Note: if AOI extends between two FABDEM ranges this needs to be run on each. This
     can be a little slower than downloading manually. If you select new=True it will
     just give you the link to the download file which is marginally faster.
-    
+
     Parameters:
     ----------
     aoi : shapely.Polygon
@@ -262,16 +264,16 @@ def download_fabdem(aoi, save_dir, new=False):
         Directory to save the zipfile in
     new : bool (default=False)
         Download the file. When new=False just returns the download urls.
-    
+
     References:
     -----------
     ..[1] https://dx.doi.org/10.1088/1748-9326/ac4d4f
     """
-    
+
     def roundup(x):
         if x >= 0:
             return int((x + 9) // 10 * 10)
-        else: 
+        else:
             return int(ceil((x + 9) / 10) * 10)
 
     def rounddown(x):
@@ -282,7 +284,7 @@ def download_fabdem(aoi, save_dir, new=False):
     ymin = rounddown(ymin)
     xmax = roundup(xmax)
     ymax = roundup(ymax)
-    
+
     def format_coords(ymin, ymax, xmin, xmax):
         ymin = f"S{-ymin:02d}" if ymin < 0 else f"N{ymin:02d}"
         ymax = f"S{-ymax:02d}" if ymax < 0 else f"N{ymax:02d}"
@@ -294,7 +296,7 @@ def download_fabdem(aoi, save_dir, new=False):
         fabdem_url = f"https://data.bris.ac.uk/datasets/25wfy0f9ukoge2gs7a5mqpq2j7/{filestr}"
 
         return fabdem_url
-    
+
 
     fabdemurls = []
     if abs(ymin - ymax) <= 10 and abs(xmin - xmax) <= 10:
@@ -315,7 +317,7 @@ def download_fabdem(aoi, save_dir, new=False):
         fabdemurls.append(format_coords(ymin, ymid, xmid, xmax))
         fabdemurls.append(format_coords(ymid, ymax, xmin, xmid))
         fabdemurls.append(format_coords(ymid, ymax, xmid, xmax))
-        
+
     print("All urls:", *fabdemurls)
 
     if new:
@@ -332,9 +334,9 @@ def download_fabdem(aoi, save_dir, new=False):
 def get_subfile(aoi, save_dir, fabdemurl):
     """
     Extract subfile covering AOI from a folder of .tifs.
-    
+
     Note: if AOI extends between two FABDEM ranges this needs to be run for each.
-    
+
     Parameters:
     ----------
     aoi : shapely.Polygon
@@ -343,12 +345,12 @@ def get_subfile(aoi, save_dir, fabdemurl):
         Directory to save the zipfile in
     fabdemurl : str
         Result of download_fabdem() with target file name.
-    
+
     References:
     -----------
     ..[1] https://dx.doi.org/10.1088/1748-9326/ac4d4f
     """
-    
+
     filestr = fabdemurl.split('/')[-1]
     xmin, _, _, ymax = aoi.total_bounds
     xmin = floor(xmin)
@@ -359,7 +361,7 @@ def get_subfile(aoi, save_dir, fabdemurl):
     for path in Path(join(save_dir, filestr[:-4])).glob("*"):
         paths.append(str(path))
 
-    
+
     # get min yval>ymax and highest xval<xmin
     lats = []
     lons = []
@@ -373,7 +375,7 @@ def get_subfile(aoi, save_dir, fabdemurl):
 
         lats.append(lat)
         lons.append(lon)
-        
+
     latmax = max(lats)
     lonmin = min(lons)
 
@@ -384,7 +386,7 @@ def get_subfile(aoi, save_dir, fabdemurl):
     while (latmax >= ymax) and (len(lats) > 1):  # was >= 13/05/2022
         lats.remove(latmax)
         latmax = max(lats)
-    
+
     # FABDEM file syntax
     y = f"S{-latmax:02d}" if latmax < 0 else f"N{latmax:02d}"
     x = f"W{-lonmin:03d}" if lonmin < 0 else f"E{lonmin:03d}"
