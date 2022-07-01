@@ -1,17 +1,23 @@
+"""
+Class for creating storm events and all their features.
+"""
+
+
 from os.path import join, exists
+from ast import literal_eval
 import logging
+
 import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
 from shapely.geometry import box, shape
-from ast import literal_eval
-
-from data_utils import *
-from model_utils import *
+from shapely.ops import nearest_points
 
 import ee
 import geemap
-from shapely.ops import nearest_points
+
+from data_utils import *
+from model_utils import *
 
 # ignore pd.Index future warnings for now
 import warnings
@@ -21,17 +27,24 @@ class Event:
 
     def __init__(self, storm, region, nsubregions, wd, bd, gridsize=500, stagger=0):
         """Set up instance of the storm Event."""
-        logging.info(f"\nSetting up storm {storm.capitalize()} Event instance for "\
+
+        # set up logging
+        logger = logging.getLogger(f"data_collection.{storm}")
+        # log_file_path = join(bd, 'logfiles')
+        # fh = logging.FileHandler(join(log_file_path, f"data_collection.{storm}.log"), 'w')
+        self.logger = logger
+        self.logger.info(f"Setting up Storm {storm.capitalize()} Event instance for "\
                 f"{region.capitalize()} with {nsubregions} subregions.")
-        logging.info("--------------------------------------------------------\n\n")
+
+        # set up attributes
         self.storm = storm
         self.region = region
         self.gridsize = gridsize
         self.stagger = stagger
         self.nsubregions = nsubregions
         self.subregions = [x for x in range(nsubregions)]
-        self.wd = wd
-        self.bd = bd
+        self.wd = wd  # working dir
+        self.bd = bd  # base dir
         self.indir = join(self.wd, f"{storm}_{region}")
         self.startdate, self.enddate = [*pd.read_csv(join(self.wd, "event_dates.csv"),
                                    index_col="storm").loc[storm]]
@@ -47,12 +60,84 @@ class Event:
         self.grid_ee = [None] * nsubregions
         self.connected_to_gee = -1
 
+        # calculate all the grids
         grids = []
         for n in self.subregions:
-            grids.append(self.make_grid(n))
+            grids.append(self.get_grid(n))
 
 
-    def make_grid(self, subregion):
+    def process_all_subregions(self, feature_list=None):
+        """Process all subregions and save to feature_stats directory."""
+
+        for subregion in range(self.nsubregions):
+            # check if subregion has been calculated
+            storm_file = open(join(self.bd, "logfiles", 'storm_file.txt'), 'r')
+            if f"{self.storm}_{self.region}_{subregion}" not in storm_file:
+                self.logger.info(f'\nProcessing subregion {subregion}\n')
+                self.get_all_features(subregion, recalculate=True, feature_list=None)
+
+                # save to output, feature_stats directory
+                self.feature_gdf[subregion].to_file(join(self.wd, "feature_stats", f"{self.storm}_{self.region}_{subregion}_{self.stagger}.shp"))
+                self.logger.info(f"Finished processing Storm {self.storm.captalize()} in "\
+                             f"{self.region.capitalize()}, subregion {subregion.capitalize()}.")
+                storm_file.close()
+
+                # append event and subregion to logfile
+                storm_file = open(join(self.bd, "logfiles", 'storm_file.txt'), 'a')
+                storm_file.write(f"{self.storm}_{self.region}_{subregion}")
+                storm_file.close()
+
+
+    def get_all_features(self, subregion, recalculate=False, feature_list=None):
+        """Get all features for the subregion."""
+        if feature_list is None:
+            feature_list = ["flood", "elevation", "permwater", "pw_dists", "precipitation", "era5", "soilcarbon", "mangroves", "ndvi", "wind_fields"]
+
+        # get a GeoDataFrame
+        self.get_gdf(subregion, recalculate=recalculate)
+        for feature in feature_list:
+            getattr(self, f"get_{feature}")(subregion)
+
+    def get_gdf(self, subregion, recalculate=False):
+        """Load pre-existing gdf or create one if recalculating or doesn't exist."""
+
+        grid_lonlat = self.grid_lonlat[subregion]
+
+        if recalculate:
+            self.logger.info("Recalculating shapefile...")
+            feature_gdf = gpd.GeoDataFrame(grid_lonlat)
+            feature_gdf["storm"] = [self.storm] * len(feature_gdf)
+            feature_gdf["region"] = [self.region] * len(feature_gdf)
+            feature_gdf["subregion"] = [subregion] * len(feature_gdf)
+            feature_gdf = feature_gdf.set_crs("EPSG:4326")
+            self.feature_gdf[subregion] = feature_gdf
+            self.save_gdf(subregion)
+        else:
+            file = join(self.indir, f'feature_stats_{subregion}_{self.stagger}.shp')
+            self.logger.info(f"Looking for {file}")
+            try:
+                self.feature_gdf[subregion] = gpd.read_file(file)
+                self.logger.info(f"Loaded existing shapefile {file}...")
+            except:
+                self.logger.info("No shapefile exists, creating new one...")
+                feature_gdf = gpd.GeoDataFrame(grid_lonlat)
+                feature_gdf["storm"] = [self.storm] * len(feature_gdf)
+                feature_gdf["region"] = [self.region] * len(feature_gdf)
+                feature_gdf["subregion"] = [subregion] * len(feature_gdf)
+                feature_gdf = feature_gdf.set_crs("EPSG:4326")
+                self.feature_gdf[subregion] = feature_gdf
+                self.save_gdf(subregion)
+
+
+    def save_gdf(self, subregion):
+        """Save/update the GeoDataFrame as a shapefile."""
+
+        file = join(self.indir, f'feature_stats_{subregion}_{self.stagger}.shp')
+        self.feature_gdf[subregion].to_file(file)
+        self.logger.info(f"Saved as {file}...\n")
+
+
+    def get_grid(self, subregion):
         """Make grid from geoJSON file."""
         geoJSON = literal_eval(pd.read_csv(join(self.wd, "event_geojsons.csv"),
                                            index_col="region").loc[self.region][0])
@@ -68,7 +153,7 @@ class Event:
         poly = box(x-dx, y-dy, x+dx, y+dy)
         aoi_pm = gpd.GeoDataFrame({"geometry": poly}, index=[0], crs="EPSG:3857")
         aoi_lonlat = aoi_pm.to_crs("EPSG:4326")
-        logging.info(f"subregion {subregion} area: {aoi_pm.area[0] / (1000 * 1000)} sqkm")
+
         grid_pm = make_grid(*aoi_pm.total_bounds, length=self.gridsize, wide=self.gridsize)
         grid_lonlat = grid_pm.to_crs("EPSG:4326")
 
@@ -77,70 +162,17 @@ class Event:
         self.grid_pm[subregion] = grid_pm
         self.grid_lonlat[subregion] = grid_lonlat
 
-    def get_floodfile(self, subregion, viz=False):
-        """Load Copernicus EMS flood polygon."""
-        indir = self.indir
-        flood = gpd.read_file(join(self.indir, "flood.shp")).to_crs('EPSG:4326')
 
-        if exists(join(indir, "hydrographyA.shp")):
-            pwater = gpd.read_file(join(self.indir, "hydrographyA.shp"))
-            trueflood = gpd.overlay(flood, pwater, how="difference")
-        else:
-            trueflood = flood
-        self.flood = trueflood
+    def get_flood(self, subregion):
+        """Calculate flood fractions per gridcell."""
 
-        if viz:
-        # plot flood data
-            fig, ax = plt.subplots(1, figsize=(10, 5))
-            trueflood.plot(ax=ax, color="#21c4c5")
-            if exists(join(indir, "hydrographyA.shp")):
-                pwater.plot(ax=ax, color="#01306e")
-            self.grid_lonlat[subregion].boundary.plot(color="red", ax=ax, linewidth=0.02)
-            self.aoi_lonlat[subregion].boundary.plot(color="red", ax=ax)
-            ax.set_title(f"Flood in {self.region}_{subregion}");
-
-    def get_gdf(self, subregion, recalculate=False):
-        """Load pre-existing gdf or create one if recalculating or doesn't exist."""
-        grid_lonlat = self.grid_lonlat[subregion]
-        if not recalculate:
-            file = join(self.indir, f'feature_stats_{subregion}_{self.stagger}.shp')
-            logging.info(f"Looking for {file}")
-            try:
-                self.feature_gdf[subregion] = gpd.read_file(file)
-                logging.info(f"Loaded existing shapefile {file}...\n")
-            except:
-                logging.info("No shapefile exists, creating new one...\n")
-                feature_gdf = gpd.GeoDataFrame(grid_lonlat)
-                feature_gdf["storm"] = [self.storm] * len(feature_gdf)
-                feature_gdf["region"] = [self.region] * len(feature_gdf)
-                feature_gdf["subregion"] = [subregion] * len(feature_gdf)
-                feature_gdf = feature_gdf.set_crs("EPSG:4326")
-                self.feature_gdf[subregion] = feature_gdf
-                self.save_gdf(subregion)
-        else:
-            logging.info("Recalculating shapefile...\n")
-            feature_gdf = gpd.GeoDataFrame(grid_lonlat)
-            feature_gdf["storm"] = [self.storm] * len(feature_gdf)
-            feature_gdf["region"] = [self.region] * len(feature_gdf)
-            feature_gdf["subregion"] = [subregion] * len(feature_gdf)
-            feature_gdf = feature_gdf.set_crs("EPSG:4326")
-            self.feature_gdf[subregion] = feature_gdf
-            self.save_gdf(subregion)
-
-    def save_gdf(self, subregion):
-        """Save/update the GeoDataFrame as a shapefile."""
-        file = join(self.indir, f'feature_stats_{subregion}_{self.stagger}.shp')
-        self.feature_gdf[subregion].to_file(file)
-        logging.info(f"Saved as {file}...")
-
-    def get_flood(self, subregion, recalculate=False, viz=False):
-        self.get_gdf(subregion, recalculate=recalculate)
-        self.get_floodfile(subregion)
-
+        if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
         feature_gdf = self.feature_gdf[subregion]
 
-        if "floodfrac" not in feature_gdf or recalculate:
+        if "floodfrac" not in feature_gdf:
             # calculate flood fraction over the grid cells in Pseudo-Mercator
+            self.logger.info("Calculating flood fractions...")
+            self.get_floodfile(subregion)
             flood = self.flood
             aoi_lonlat  = self.aoi_lonlat[subregion]
             grid_pm = self.grid_pm[subregion]
@@ -153,20 +185,30 @@ class Event:
             self.feature_gdf[subregion] = feature_gdf
             self.save_gdf(subregion)
 
-        if viz:
-            # plot output
-            fig, ax = plt.subplots(1, 1)
-            self.feature_gdf[subregion].plot(column="floodfrac", cmap="YlGnBu", ax=ax, legend=True);
+
+    def get_floodfile(self, subregion):
+        """Load Copernicus EMS flood polygon."""
+
+        indir = self.indir
+        flood = gpd.read_file(join(self.indir, "flood.shp")).to_crs('EPSG:4326')
+
+        if exists(join(indir, "hydrographyA.shp")):
+            pwater = gpd.read_file(join(self.indir, "hydrographyA.shp"))
+            trueflood = gpd.overlay(flood, pwater, how="difference")
+        else:
+            trueflood = flood
+        self.flood = trueflood
 
 
     def start_gee(self, subregion):
         """Initialize Google Earth Engine with service account."""
 
         # workaround to solve conflict with collections
-        logging.info("Connecting to Google Earth Engine...\n")
+        self.logger.info("Connecting to Google Earth Engine...\n")
         import collections
         collections.Callable = collections.abc.Callable
 
+        # initialize GEE
         try:
             ee.Initialize()
         except:
@@ -192,23 +234,22 @@ class Event:
             features.append(poly)
 
         grid_ee = ee.FeatureCollection(features)
-        logging.info(f"Grid size: {grid_ee.size().getInfo()}")
+        self.logger.info(f"Grid size: {grid_ee.size().getInfo()}")
 
         self.aoi_ee[subregion] = aoi_ee
         self.location[subregion] = location
         self.grid_ee[subregion] = grid_ee
 
 
-    def get_gebco(self, subregion, recalculate=False, viz=False):
+    def get_gebco(self, subregion):
         """Download GEBCO raster from GEE.
 
         GEBCO bathymetry data: 15 arcseconds (approx. 0.5km)
         """
 
-
-        if self.feature_gdf[subregion] is None: self.get_gdf(subregion, recalculate=recalculate)
-        if "gebco" not in self.feature_gdf[subregion] or recalculate:
-            logging.info("Calculating GEBCO bathymetry...")
+        if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
+        if "gebco" not in self.feature_gdf[subregion]:
+            self.logger.info("Calculating GEBCO bathymetry...")
             feature_gdf = self.feature_gdf[subregion]
 
             if self.connected_to_gee != subregion:
@@ -236,23 +277,18 @@ class Event:
             self.feature_gdf[subregion] = feature_gdf
             self.save_gdf(subregion)
 
-        if viz:
-        # plot output
-            fig, ax = plt.subplots(1, 1)
-            feature_gdf.plot(column='gebco', cmap="YlGnBu_r", ax=ax, legend=True);
 
-
-    def get_fabdem(self, subregion, recalculate=False, viz=False):
+    def get_fabdem(self, subregion):
         """
         Get FABDEM DTM from Google Earth Engine.
 
         From awesome-gee-community-datasets.
 
         """
-        if self.feature_gdf[subregion] is None: self.get_gdf(subregion, recalculate=recalculate)
+        if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
 
-        if "fabdem" not in self.feature_gdf[subregion] or recalculate:
-            logging.info("Calculating FABDEM DTM...")
+        if "fabdem" not in self.feature_gdf[subregion]:
+            self.logger.info("Calculating FABDEM DTM...")
             feature_gdf = self.feature_gdf[subregion]
 
             if self.connected_to_gee != subregion:
@@ -279,80 +315,71 @@ class Event:
             self.feature_gdf[subregion] = feature_gdf
             self.save_gdf(subregion)
 
-        if viz:
-            # plot output
-            fig, ax = plt.subplots(1, 1)
-            feature_gdf.plot(column='fabdem', cmap="terrain", ax=ax, legend=True, vmin=-10)
 
-    def get_elevation(self, subregion, recalculate=False, viz=False):
+    def get_elevation(self, subregion):
         """Calculate approx. elevation from GEBCO and FABDEM."""
-        if self.feature_gdf[subregion] is None: self.get_gdf(subregion, recalculate=recalculate)
+        if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
 
-        if "elevation" not in self.feature_gdf[subregion] or recalculate:
-            self.get_gebco(subregion, viz=False)
-            self.get_fabdem(subregion, viz=False)
+        if "elevation" not in self.feature_gdf[subregion]:
+            self.get_gebco(subregion)
+            self.get_fabdem(subregion)
             self.feature_gdf[subregion]['elevation'] = self.feature_gdf[subregion]["gebco"]\
             + self.feature_gdf[subregion]["fabdem"]
             self.save_gdf(subregion)
 
-        if viz:
-            fig, ax = plt.subplots(1, 1)
-            self.feature_gdf[subregion].plot(column='elevation', cmap="terrain", ax=ax, legend=True);
 
-    def get_permwater(self, subregion, recalculate=False, viz=False):
+    def get_permwater(self, subregion):
         """Get JRC Permanent water from Google Earth Engine.
 
         JRC permanent water dataset: 30 arcseconds (approx. 1km). Needs a better way to impute missing ocean values.
         """
-        if self.feature_gdf[subregion] is None: self.get_gdf(subregion, recalculate=recalculate)
+        if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
 
-        logging.info("Recalculating permanent water...")
-        feature_gdf = self.feature_gdf[subregion]
+        if "jrc_permwa" not in self.feature_gdf[subregion]:
+            self.logger.info("Recalculating permanent water...")
+            feature_gdf = self.feature_gdf[subregion]
 
-        if self.connected_to_gee != subregion:
-            self.start_gee(subregion)
+            if self.connected_to_gee != subregion:
+                self.start_gee(subregion)
 
-        aoi_ee = self.aoi_ee[subregion]
-        grid_ee = self.grid_ee[subregion]
+            aoi_ee = self.aoi_ee[subregion]
+            grid_ee = self.grid_ee[subregion]
 
-        jrc_permwater = (ee.Image("JRC/GSW1_3/GlobalSurfaceWater")
-                         .clip(aoi_ee)
-                         .select("occurrence")
-                         .unmask(0))
+            jrc_permwater = (ee.Image("JRC/GSW1_3/GlobalSurfaceWater")
+                             .clip(aoi_ee)
+                             .select("occurrence")
+                             .unmask(0))
 
-        # Add reducer output to the Features in the collection.
-        mean_jrc_permwater = jrc_permwater.reduceRegions(collection=grid_ee,
-                                                 reducer=ee.Reducer.mean(), scale=self.gridsize)
-        jrc_permwater_list = mean_jrc_permwater.aggregate_array('mean').getInfo()
+            # Add reducer output to the Features in the collection.
+            mean_jrc_permwater = jrc_permwater.reduceRegions(collection=grid_ee,
+                                                     reducer=ee.Reducer.mean(), scale=self.gridsize)
+            jrc_permwater_list = mean_jrc_permwater.aggregate_array('mean').getInfo()
 
 
-        jrc_permwater_list2 = []
-        feature_gdf["jrc_permwa"] = jrc_permwater_list
+            jrc_permwater_list2 = []
+            feature_gdf["jrc_permwa"] = jrc_permwater_list
 
-        # slightly hack-y way of filling-in ocean
-        max_pw = feature_gdf.jrc_permwa.describe()["max"]
-        pw_ix = feature_gdf[(feature_gdf['jrc_permwa']<=90) & (feature_gdf["gebco"]<-90)].index
-        feature_gdf.loc[pw_ix, "jrc_permwa"] = 100
+            # slightly hack-y way of filling-in ocean
+            max_pw = feature_gdf.jrc_permwa.describe()["max"]
+            pw_ix = feature_gdf[(feature_gdf['jrc_permwa']<=90) & (feature_gdf["gebco"]<-90)].index
+            feature_gdf.loc[pw_ix, "jrc_permwa"] = 100
 
-        # save to gdf
-        self.feature_gdf[subregion] = feature_gdf
-        self.save_gdf(subregion)
-        if viz:
-            # plot results
-            fig, ax = plt.subplots(1, 1)
-            self.feature_gdf[subregion].plot(column='jrc_permwa', ax=ax, cmap="YlGnBu", legend=True);
+            # save to gdf
+            self.feature_gdf[subregion] = feature_gdf
+            self.save_gdf(subregion)
 
-    def get_pw_dists(self, subregion, thresh=60, recalculate=False, viz=False):
+
+    def get_pw_dists(self, subregion, thresh=60):
         """Calculate cell distances and slopes to nearest permanent water."""
 
-        if self.feature_gdf[subregion] is None: self.get_gdf(subregion, recalculate=recalculate)
+        if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
 
-        if "dist_pw" not in self.feature_gdf[subregion] or recalculate:
-            logging.info("Recalculating distances to water...")
+        if "dist_pw" not in self.feature_gdf[subregion]:
+            self.logger.info(f"Recalculating distances to water with occurence threshold={thresh}...")
             feature_gdf = self.feature_gdf[subregion]
 
             if "dist_pw" not in self.feature_gdf[subregion]:
-                self.get_elevation(subregion, viz=False)
+                self.get_elevation(subregion)
 
             if self.connected_to_gee != subregion:
                 self.start_gee(subregion)
@@ -392,73 +419,97 @@ class Event:
             self.feature_gdf[subregion] = feature_gdf
             self.save_gdf(subregion)
 
-        if viz:
-            # plot results
-            fig, ax = plt.subplots(1, 1)
-            self.feature_gdf[subregion].plot('dist_pw', cmap="YlGnBu_r", legend=True, ax=ax)
-            ax.set_title(f"Distance to permanent water (m)\n(>{thresh} occurence)");
 
-    def get_precipitation(self, subregion, recalculate=False, viz=False):
+    def get_precipitation(self, subregion):
         """CHIRPS Daily Precipitation: 0.05 degrees daily"""
 
-        if self.feature_gdf[subregion] is None:
+        if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
 
-
-            _gdf(subregion)
-
-        if "precip" not in self.feature_gdf[subregion] or recalculate:
-            logging.info("Calculating precipitation...")
-
+        if "precip" not in self.feature_gdf[subregion]:
+            self.logger.info("Calculating CHIRPS daily precipitation averages...")
             feature_gdf = self.feature_gdf[subregion]
 
-            if self.connected_to_gee != subregion:
-                self.start_gee(subregion)
-
+            # set up Google Earth Engine for subregion
+            if self.connected_to_gee != subregion: self.start_gee(subregion)
             aoi_ee = self.aoi_ee[subregion]
             grid_ee = self.grid_ee[subregion]
 
-            precip = ee.Image(ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")
-                              .select('precipitation')
-                              .filterBounds(aoi_ee)
-                              .filterDate(self.startdate, self.enddate)
-                              .mean()
-                              .clip(aoi_ee))
+            # which features from CHIRPS Daily Aggregates to use
+            features = ['precipitation']
+            for feature in features:
+                feat = ee.Image(ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")
+                                  .select(feature)
+                                  .filterBounds(aoi_ee)
+                                  .filterDate(self.startdate, self.enddate)
+                                  .mean()
+                                  .clip(aoi_ee))
 
-            # unmask using the spatial average
-            spatial_mean = precip.reduceRegions(aoi_ee, ee.Reducer.mean(), scale=self.gridsize)  # self.gridsize defined by output scale, always in (m)
-            spatial_mean = spatial_mean.getInfo()['features'][0]['properties']['mean']
-            precip = precip.unmask(spatial_mean)
+                # unmask using the spatial average
+                spatial_mean = feat.reduceRegions(aoi_ee, ee.Reducer.mean(), scale=self.gridsize)
+                spatial_mean = spatial_mean.getInfo()['features'][0]['properties']['mean']
+                feat = feat.unmask(spatial_mean)
 
-            # Add reducer output to the Features in the collection.
-            mean_precip = precip.reduceRegions(collection=grid_ee,
-                                                     reducer=ee.Reducer.mean(), scale=self.gridsize)
-            precip_list = mean_precip.aggregate_array('mean').getInfo()
+                # Add reducer output to the Features in the collection.
+                mean_feat = feat.reduceRegions(collection=grid_ee,
+                                                         reducer=ee.Reducer.mean(), scale=self.gridsize)
+                feat_list = mean_feat.aggregate_array('mean').getInfo()
+                feature_gdf[feature[:6]] = feat_list
 
             # save output
-            feature_gdf["precip"] = precip_list
             self.feature_gdf[subregion] = feature_gdf
             self.save_gdf(subregion)
 
-        if viz:
-            # plot results
-            fig, ax = plt.subplots(1, 1)
-            self.feature_gdf[subregion].plot(column='precip', ax=ax, cmap="Blues", legend=True)
-            ax.set_title(f"Mean precipitation {self.startdate}-{self.enddate}");
+    def get_era5(self, subregion):
+        """ERA5 Daily MSLP and Surface pressure."""
 
+        if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
 
-    def get_soilcarbon(self, subregion, recalculate=False, viz=False):
-        """Get soil organic carbon from Google Earth Engine."""
-
-        if self.feature_gdf[subregion] is None: self.get_gdf(subregion, recalculate=recalculate)
-
-        if "soilcarbon" not in self.feature_gdf[subregion] or recalculate:
-            logging.info("Calculating soil carbon...")
-
+        if "mslp" not in self.feature_gdf[subregion]:
+            self.logger.info("Calculating ERA5 climate variables...")
             feature_gdf = self.feature_gdf[subregion]
 
-            if self.connected_to_gee != subregion:
-                self.start_gee(subregion)
+            # set up Google Earth Engine for subregion
+            if self.connected_to_gee != subregion: self.start_gee(subregion)
+            aoi_ee = self.aoi_ee[subregion]
+            grid_ee = self.grid_ee[subregion]
 
+            # which features from ERA5 Daily Aggregates to use
+            feature_names = ['mslp', 'sp']
+            features = ['mean_sea_level_pressure', 'surface_pressure']
+            for feature, feature_name in zip(features, feature_names):
+                feat = ee.Image(ee.ImageCollection("ECMWF/ERA5/DAILY")
+                                  .select(feature)
+                                  .filterBounds(aoi_ee)
+                                  .filterDate(self.startdate, self.enddate)
+                                  .mean()
+                                  .clip(aoi_ee))
+
+                # unmask using the spatial average
+                spatial_mean = feat.reduceRegions(aoi_ee, ee.Reducer.mean(), scale=self.gridsize)
+                spatial_mean = spatial_mean.getInfo()['features'][0]['properties']['mean']
+                feat = feat.unmask(spatial_mean)
+
+                # Add reducer output to the Features in the collection.
+                mean_feat = feat.reduceRegions(collection=grid_ee,
+                                                         reducer=ee.Reducer.mean(), scale=self.gridsize)
+                feat_list = mean_feat.aggregate_array('mean').getInfo()
+                feature_gdf[feature_name] = feat_list
+
+            # save output
+            self.feature_gdf[subregion] = feature_gdf
+            self.save_gdf(subregion)
+
+    def get_soilcarbon(self, subregion):
+        """Get soil organic carbon from Google Earth Engine."""
+
+        if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
+
+        if "soilcarbon" not in self.feature_gdf[subregion]:
+            self.logger.info("Calculating soil carbon...")
+            feature_gdf = self.feature_gdf[subregion]
+
+            # set up Google Earth Engine for subregion
+            if self.connected_to_gee != subregion: self.start_gee(subregion)
             aoi_ee = self.aoi_ee[subregion]
             grid_ee = self.grid_ee[subregion]
 
@@ -477,25 +528,18 @@ class Event:
             feature_gdf["soilcarbon"] = soilcarbon_list
             self.feature_gdf[subregion] = feature_gdf
             self.save_gdf(subregion)
-        if viz:
-            # plot output
-            fig, ax = plt.subplots(1, 1)
-            self.feature_gdf[subregion].plot(column='soilcarbon', ax=ax, cmap="YlOrBr", legend=True)
-            ax.set_title("Soil organic carbon");
 
 
-    def get_mangroves(self, subregion, recalculate=False, viz=False):
+    def get_mangroves(self, subregion):
         """Mangrove forests from year 2000 (Giri, 2011)"""
-        if self.feature_gdf[subregion] is None: self.get_gdf(subregion, recalculate=recalculate)
+        if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
 
-        if "mangrove" not in self.feature_gdf[subregion] or recalculate:
-            logging.info("Calculating mangrove cover...")
-
+        if "mangrove" not in self.feature_gdf[subregion]:
+            self.logger.info("Calculating mangrove cover...")
             feature_gdf = self.feature_gdf[subregion]
 
-            if self.connected_to_gee != subregion:
-                self.start_gee(subregion)
-
+            # set up Google Earth Engine for subregion
+            if self.connected_to_gee != subregion: self.start_gee(subregion)
             aoi_ee = self.aoi_ee[subregion]
             grid_ee = self.grid_ee[subregion]
 
@@ -513,32 +557,20 @@ class Event:
             self.feature_gdf[subregion] = feature_gdf
             self.save_gdf(subregion)
 
-        if viz:
-            # plot output
-            fig, ax = plt.subplots(1, 1)
-            self.feature_gdf[subregion].plot(column='mangrove', ax=ax, cmap="YlGn", legend=True)
-            ax.set_title("Mangroves 2000 baseline (Giri, 2011)")
 
-    def get_ndvi(self, subregion, recalculate=False, viz=False):
+    def get_ndvi(self, subregion):
         """NDVI (reprojected and masked from mangroves)"""
-        if self.feature_gdf[subregion] is None: self.get_gdf(subregion, recalculate=recalculate)
 
-        if "ndvi" not in self.feature_gdf[subregion] or recalculate:
-            logging.info("Calculating NDVI...")
+        if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
 
+        if "ndvi" not in self.feature_gdf[subregion]:
+            self.logger.info("Calculating NDVI...")
             feature_gdf = self.feature_gdf[subregion]
 
-            if self.connected_to_gee != subregion:
-                self.start_gee(subregion)
-
+            # set up Google Earth Engine for subregion
+            if self.connected_to_gee != subregion: self.start_gee(subregion)
             aoi_ee = self.aoi_ee[subregion]
             grid_ee = self.grid_ee[subregion]
-
-            # reload mangroves
-            mangrove = ee.Image(ee.ImageCollection("LANDSAT/MANGROVE_FORESTS")
-                                           .filterBounds(aoi_ee)
-                                           .first()
-                                           .clip(aoi_ee))
 
             # NDVI
             ndvi = ee.Image(ee.ImageCollection("MODIS/006/MOD13Q1")
@@ -549,12 +581,17 @@ class Event:
 
             ndvi = ndvi.select('NDVI')
 
-            # mask out mangroves
-            logging.info("Masking out mangrove presence...")
-            mangrove = mangrove.unmask(0)
-            mangrove_mask = mangrove.eq(0)
-            ndvi_masked = ndvi.updateMask(mangrove_mask)
-            ndvi = ndvi_masked.unmask(0)
+            # # mask out mangroves -- TODO
+            # # reload mangroves for masking
+            # mangrove = ee.Image(ee.ImageCollection("LANDSAT/MANGROVE_FORESTS")
+            #                                .filterBounds(aoi_ee)
+            #                                .first()
+            #                                .clip(aoi_ee))
+            # self.logger.info("Masking out mangrove presence...")
+            # mangrove = mangrove.unmask(0)
+            # mangrove_mask = mangrove.eq(0)
+            # ndvi_masked = ndvi.updateMask(mangrove_mask)
+            # ndvi = ndvi_masked.unmask(0)
 
             # calculate mean over feature collection
             mean_ndvi = ndvi.reduceRegions(collection=grid_ee,
@@ -565,19 +602,19 @@ class Event:
             self.feature_gdf[subregion] = feature_gdf
             self.save_gdf(subregion)
 
-        if viz:
-            fig, ax = plt.subplots(1, 1)
-            self.feature_gdf[subregion].plot(column='ndvi', ax=ax, cmap="YlGn", legend=True)
-            ax.set_title("NDVI (mangroves masked out)")
 
-
-    # takes ages...
-    def get_wind_fields(self, subregion, recalculate=False, viz=False):
+    # takes a while...
+    def get_wind_fields(self, subregion):
         """Get wind fields from IBTrACs data using Holland (1980) method."""
-        if self.feature_gdf[subregion] is None: self.get_gdf(subregion, recalculate=recalculate)
 
-        if not any("wnd" in col for col in self.feature_gdf[subregion].columns) or recalculate:
-            logging.info("Calculating wind speeds...")
+        # TODO: change WMO wind agency method for RMW
+        # change messy for loop formatting
+        # make more modular
+
+        if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
+
+        if not any("wnd" in col for col in self.feature_gdf[subregion].columns):
+            self.logger.info("Calculating wind speeds...")
             feature_gdf = self.feature_gdf[subregion]
 
             # load and process IBTrACs data
@@ -590,135 +627,13 @@ class Event:
                 ibtracs_gdf = ibtracs_gdf[ibtracs_gdf.NAME == self.storm.upper()]
                 units_df = pd.read_csv(join(self.wd, "ibtracs_since1980.csv"), dtype=str, header=0)[0:1]
 
-            # set geometry for gdf
-            for col in ["LAT", "LON"]:
-                ibtracs_gdf[col] = pd.to_numeric(ibtracs_gdf[col])
-            ibtracs_gdf["geometry"] = gpd.points_from_xy(ibtracs_gdf.LON, ibtracs_gdf.LAT)
-            ibtracs_gdf = ibtracs_gdf.set_crs("EPSG:4326")
-            assert not ibtracs_gdf.BASIN.isna().any()
+            # process IBTrACS data
+            ibtracs_gdf = process_ibtracs(ibtracs_gdf)
+            feature_gdf = get_wind_field(ibtracs_gdf, feature_gdf)
 
-            # rescale wind speeds to MSW10
-            for agency in IBTRACS_AGENCIES:
-                scale, shift = IBTRACS_AGENCY_10MIN_WIND_FACTOR[agency]
-                ibtracs_gdf[f'{agency}_wind'.upper()] = pd.to_numeric(ibtracs_gdf[f'{agency}_wind'.upper()])
-                ibtracs_gdf[f'{agency}_wind'.upper()] += shift
-                ibtracs_gdf[f'{agency}_wind'.upper()] *= scale
-
-            # rescale WMO_WIND column to MSW10
-            def rescale_wmo(wind, agency):
-                wind = float(wind)
-                if wind > 0:
-                    scale, shift = IBTRACS_AGENCY_10MIN_WIND_FACTOR[agency]
-                    return wind * scale + shift
-                else:
-                    return np.nan
-            ibtracs_gdf['WMO_WIND'] = ibtracs_gdf[['WMO_WIND', 'WMO_AGENCY']]\
-                .apply(lambda x: rescale_wmo(x[0], x[1]), axis=1)
-
-            # grab most-recorded wind speed if WMO not available
-            if not ibtracs_gdf.WMO_WIND.isna().all():
-                wind_col = "WMO_WIND"
-                pressure_col = "WMO_PRES"
-                agency = ibtracs_gdf["WMO_AGENCY"].mode()
-                rmw_col = f"USA_RMW"  # double-check this, f"{agency}_RMW"
-            else:
-                wind_col = ibtracs_gdf[WIND_COLS].notna().sum().idxmax()
-                agency = wind_col.split("_")[0]
-                pressure_col = f"{agency}_PRES"
-                rmw_col = f"{agency}_RMW"
-            ibtracs_gdf = ibtracs_gdf.dropna(subset=wind_col).reset_index()
-
-            # fix timestamps formatting
-            newtimes = []
-            for time in ibtracs_gdf["ISO_TIME"]:
-                if len(time) > 8:
-                    date = time[:10]
-                    newtimes.append(time)
-                else:
-                    newtime = f"{date} {time}"
-                    newtimes.append(newtime)
-
-            # start calculating wind field
-            centroids = feature_gdf.to_crs("EPSG:3857").centroid.to_crs("EPSG:4326")
-            wind_tracks = ibtracs_gdf.geometry
-            lats = [*wind_tracks.y]
-            lons = [*wind_tracks.x]
-
-            # haversine distances
-            h_distances = []
-            for centroid in centroids:
-                h_distances.append(haversine(centroid.x, centroid.y, lons, lats))
-            h_distances = np.array(h_distances)
-            assert len(ibtracs_gdf) == h_distances.shape[1]
-
-            # calculate wind field for each time stamp
-            timestamps = []
-            for time in range(len(ibtracs_gdf)):
-
-                # inputs for holland function
-                h_dists = [x[time] for x in h_distances]
-                basin = ibtracs_gdf["BASIN"][time]
-                pressure_env = BASIN_ENV_PRESSURE[basin]
-                pressure = float(ibtracs_gdf[pressure_col][time])
-                lat = float(ibtracs_gdf["LAT"][time])
-
-                if abs(pressure_env - pressure) > 0:
-                    # radius of maximum winds
-                    if units_df[rmw_col][0] == "nmile":
-                        r = nmile_to_km(float(ibtracs_gdf[rmw_col][time]))
-                    else:
-                        r = float(ibtracs_gdf[rmw_col][time])
-
-                    # maximum wind speed
-                    if units_df[wind_col][0] == "kts":
-                        wind = knots_to_mps(float(ibtracs_gdf[wind_col][time]))
-                    else:
-                        wind = ibtracs_gdf[wind_col][time]
-
-                    # calculate wind field
-                    wind_field = []
-                    for distance in h_dists:
-                        wind_speed = holland_wind_field(r, wind, pressure, pressure_env, distance, lat)
-                        wind_field.append(wind_speed)
-
-                    # reformat time string
-                    iso_time = ibtracs_gdf['ISO_TIME'][time]
-                    date, time = iso_time.split(" ")
-                    date = date[5:].replace("-", "")
-                    time = time[:2]
-
-                    # if non-neglible wind append to dataframe
-                    if sum(wind_field) > 0:
-                        feature_gdf[f"wnd{date}_{time}"] = wind_field
-                else:
-                    logging.warning("No pressure drop, skipping wind speeds.")
-
+            # save average wind field
             timemask = ["wnd" in col for col in feature_gdf.columns]
             timestamps = feature_gdf.columns[timemask]
             feature_gdf["wind_avg"] = feature_gdf[timestamps].mean(axis=1)
             self.feature_gdf[subregion] = feature_gdf
             self.save_gdf(subregion)
-
-        if viz:
-            fig, ax = plt.subplots(1, 1)
-            self.feature_gdf[subregion].plot(column="wind_avg", ax=ax, cmap="Spectral", legend=True);
-            ax.set_title(f"Average wind {self.startdate}-{self.enddate}")
-
-    def get_all_data(self, subregion, recalculate=False, viz=False):
-        feature_list = ["flood", "elevation", "permwater", "pw_dists", "precipitation", "soilcarbon", "mangroves", "ndvi", "wind_fields"]
-        for feature in feature_list:
-            getattr(self, f"get_{feature}")(subregion, recalculate=recalculate, viz=viz)
-
-    def process_all_subregions(self, recalculate=False, viz=False):
-        """Process all subregions and save to feature_stats directory."""
-        for subregion in range(self.nsubregions):
-            storm_file = open(join(self.bd, "logfiles", 'storm_file.txt'), 'r')
-            if f"{self.storm}_{self.region}_{subregion}" not in storm_file:
-                logging.info(f'\nProcessing subregion {subregion}\n')
-                self.get_all_data(subregion, recalculate=recalculate, viz=viz)
-                self.feature_gdf[subregion].to_file(join(self.wd, "feature_stats", f"{self.storm}_{self.region}_{subregion}_{self.stagger}.shp"))
-                storm_file.close()
-
-                storm_file = open(join(self.bd, "logfiles", 'storm_file.txt'), 'a')
-                storm_file.write(f"{self.storm}_{self.region}_{subregion}")
-                storm_file.close()

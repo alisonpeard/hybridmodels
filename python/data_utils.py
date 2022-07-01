@@ -89,6 +89,118 @@ def get_grid_intersects(gdf, grid):
 
 #--------------------------------------------------------------------------------------------------------
 # IBTRaCs wind fields
+
+# using this to derive 10 min wind factors
+# based on Yu Mo's work and climada source code: https://climada-python.readthedocs.io/en/stable/_modules/climada/hazard/tc_tracks.html
+IBTRACS_AGENCY_10MIN_WIND_FACTOR = {
+    "usa": [1.0, 0.0],
+    "tokyo": [1.0, 0.0],
+    "newdelhi": [0.88, 0.0],  # MSW3==MSW1 in Kruk paper
+    "reunion": [1.0, 0.0],
+    "bom": [1.0, 0.0],
+    "nadi": [1.0, 0.0],
+    "wellington": [1.0, 0.0],
+    'cma': [1.0, 0.0],
+    'hko': [1.0, 0.0],
+    'ds824': [1.0, 0.0],
+    'td9636': [1.0, 0.0],
+    'td9635': [1.0, 0.0],
+    'neumann': [1.0, 0.0],
+    'mlc': [1.0, 0.0],
+    'hurdat_atl' : [0.88, 0.0],
+    'hurdat_epa' : [0.88, 0.0],
+    'atcf' : [0.88, 0.0],
+    'cphc': [0.88, 0.0]
+}
+
+WIND_COLS = ['WMO_WIND',
+ 'USA_WIND',
+ 'CMA_WIND',
+ 'HKO_WIND',
+ 'NEWDELHI_WIND',
+ 'REUNION_WIND',
+ 'BOM_WIND',
+ 'NADI_WIND',
+ 'WELLINGTON_WIND',
+ 'DS824_WIND',
+ 'TD9636_WIND',
+ 'TD9635_WIND',
+ 'NEUMANN_WIND',
+ 'MLC_WIND']
+
+DEF_ENV_PRESSURE = 1010
+BASIN_ENV_PRESSURE = {
+    '': DEF_ENV_PRESSURE,
+    'EP': 1010, 'NA': 1010, 'SA': 1010,
+    'NI': 1005, 'SI': 1005, 'WP': 1005,
+    'SP': 1004,
+}
+
+
+def knots_to_mps(x):
+    return x * 0.514
+
+
+def nmile_to_km(x):
+    return x * 1.852
+
+
+def process_ibtracs(ibtracs_df):
+    """Process IBTrACS wind and radius of max wind data."""
+    # set up geometry
+    ibtracs_gdf = ibtracs_df
+    for col in ["LAT", "LON"]: ibtracs_gdf[col] = pd.to_numeric(ibtracs_gdf[col])
+    ibtracs_gdf["geometry"] = gpd.points_from_xy(ibtracs_gdf.LON, ibtracs_gdf.LAT)
+    del ibtracs_gdf["LAT"]
+    del ibtracs_gdf["LON"]
+    ibtracs_gdf = ibtracs_gdf.set_crs("EPSG:4326")
+    assert not ibtracs_gdf.BASIN.isna().any(), "BASIN has NaN values"
+
+    # grab most-recorded wind speed if WMO not available
+    if ibtracs_gdf.WMO_WIND.isna().all():
+        wind_col = ibtracs_gdf[WIND_COLS].notna().sum().idxmax()
+        agency = wind_col.split("_")[0]
+        pressure_col = f"{agency}_PRES"
+        rmw_col = f"{agency}_RMW"
+
+        # rescale wind speed to MSW10
+        scale, shift = IBTRACS_AGENCY_10MIN_WIND_FACTOR[agency]
+        ibtracs_gdf[f'{agency}_wind'.upper()] = pd.to_numeric(ibtracs_gdf[f'{agency}_wind'.upper()])
+        ibtracs_gdf[f'{agency}_wind'.upper()] *= scale
+        ibtracs_gdf[f'{agency}_wind'.upper()] += shift
+    else:
+        wind_col = "WMO_WIND"
+        pressure_col = "WMO_PRES"
+        agency = ibtracs_gdf["WMO_AGENCY"].mode()
+        rmw_col = f"{agency}_RMW".upper() # double-check this
+
+        # rescale wind speed to MSW10
+        scale, shift = IBTRACS_AGENCY_10MIN_WIND_FACTOR[agency]
+        ibtracs_gdf[f'{agency}_wind'.upper()] = pd.to_numeric(ibtracs_gdf[f'{agency}_wind'.upper()])
+        ibtracs_gdf[f'{agency}_wind'.upper()] *= scale
+        ibtracs_gdf[f'{agency}_wind'.upper()] += shift
+
+    logging.info(f"Agency: {agency}")
+    logging.info(f"RMW column: {rmw_col}, wind column: {wind_col}, pressure column {pressure_col}")
+    logging.info(f"Scale: {scale}")
+    logging.info(f"Shift: {shift}")
+
+    # fix timestamps formatting
+    newtimes = []
+    for time in ibtracs_gdf["ISO_TIME"]:
+        if len(time) > 8:
+            date = time[:10]
+            newtimes.append(time)
+        else:
+            newtime = f"{date} {time}"
+            newtimes.append(newtime)
+
+    ibtracs_gdf['ISO_TIME'] = newtimes
+    ibtracs_gdf = ibtracs_gdf.dropna(subset=wind_col).reset_index()
+    return ibtracs_gdf
+
+
+
 def haversine(lon1, lat1, lon2_lst, lat2_lst):
     """Code from J. Verschuur. Haversine distance in km."""
     lon2_arr = np.array(lon2_lst)
@@ -148,103 +260,65 @@ def holland_wind_field(r, wind, pressure, pressure_env, distance, lat):
     )
     return Vg
 
-def knots_to_mps(x):
-    return x * 0.514
 
-def nmile_to_km(x):
-    return x * 1.852
+def get_wind_fields(ibtracs_gdf,feature_gdf):
+    # get centroids
+    centroids = feature_gdf.to_crs("EPSG:3857").centroid.to_crs("EPSG:4326")
+    wind_tracks = ibtracs_gdf.geometry
+    lats = [*wind_tracks.y]
+    lons = [*wind_tracks.x]
 
-# climada source code: https://climada-python.readthedocs.io/en/stable/_modules/climada/hazard/tc_tracks.html
-# added more from Yu Mo
-IBTRACS_AGENCIES = [
-    'usa', 'tokyo', 'newdelhi', 'reunion', 'bom', 'nadi', 'wellington',
-    'cma', 'hko', 'ds824', 'td9636', 'td9635', 'neumann', 'mlc',
-]
+    # haversine distances
+    h_distances = []
+    for centroid in centroids:
+        h_distances.append(haversine(centroid.x, centroid.y, lons, lats))
+    h_distances = np.array(h_distances)
+    assert len(ibtracs_gdf) == h_distances.shape[1],\
+        "Number of haversine distances calculates did not match number of centroids"
 
-IBTRACS_USA_AGENCIES = [
-    'atcf', 'cphc', 'hurdat_atl', 'hurdat_epa', 'jtwc_cp', 'jtwc_ep', 'jtwc_io',
-    'jtwc_sh', 'jtwc_wp', 'nhc_working_bt', 'tcvightals', 'tcvitals'
-]
+    # calculate wind field for each time stamp
+    timestamps = []
+    for time in range(len(ibtracs_gdf)):
 
-IBTRACS_AGENCY_1MIN_WIND_FACTOR = {
-    "usa": [1.0, 0.0],
-    "tokyo": [0.60, 23.3],
-    "newdelhi": [1.0, 0.0],
-    "reunion": [0.88, 0.0],
-    "bom": [0.88, 0.0],
-    "nadi": [0.88, 0.0],
-    "wellington": [0.88, 0.0],
-    'cma': [0.871, 0.0],
-    'hko': [0.9, 0.0],
-    'ds824': [1.0, 0.0],
-    'td9636': [1.0, 0.0],
-    'td9635': [1.0, 0.0],
-    'neumann': [0.88, 0.0],
-    'mlc': [1.0, 0.0]
-}
-"""Scale and shift used by agencies to convert their internal Dvorak 1-minute sustained winds to the officially reported values that are in IBTrACS. From Table 1 in: Knapp, K.R., Kruk, M.C. (2010): Quantifying Interagency Differences in Tropical Cyclone Best-Track Wind Speed Estimates. Monthly Weather Review 138(4): 1459–1473. https://library.wmo.int/index.php?lvl=notice_display&id=135
-MSW1 = MSW10/scale - shift"""
+        # inputs for holland function
+        h_dists = [x[time] for x in h_distances]
+        basin = ibtracs_gdf["BASIN"][time]
+        pressure_env = BASIN_ENV_PRESSURE[basin]
+        pressure = float(ibtracs_gdf[pressure_col][time])
+        lat = float(ibtracs_gdf["LAT"][time])
 
-# using this to derive 10 min wind factos
-IBTRACS_AGENCY_10MIN_WIND_FACTOR = {
-    "usa": [1.0, 0.0],
-    "tokyo": [1.0, 0.0],
-    "newdelhi": [0.88, 0.0],  # MSW3==MSW1 in Kruk paper
-    "reunion": [1.0, 0.0],
-    "bom": [1.0, 0.0],
-    "nadi": [1.0, 0.0],
-    "wellington": [1.0, 0.0],
-    'cma': [1.0, 0.0],
-    'hko': [1.0, 0.0],
-    'ds824': [1.0, 0.0],
-    'td9636': [1.0, 0.0],
-    'td9635': [1.0, 0.0],
-    'neumann': [1.0, 0.0],
-    'mlc': [1.0, 0.0],
-    'hurdat_atl' : [0.88, 0.0],
-    'hurdat_epa' : [0.88, 0.0],
-    'atcf' : [0.88, 0.0],
-    'cphc': [0.88, 0.0],
+        if abs(pressure_env - pressure) > 0:
+            # radius of maximum winds in km
+            if units_df[rmw_col][0] == "nmile":
+                r = nmile_to_km(float(ibtracs_gdf[rmw_col][time]))
+            else:
+                r = float(ibtracs_gdf[rmw_col][time])
 
-}
-"""MSW10 = MSW1*scale + shift"""
+            # maximum wind speed in mps
+            if units_df[wind_col][0] == "kts":
+                wind = knots_to_mps(float(ibtracs_gdf[wind_col][time]))
+            else:
+                wind = ibtracs_gdf[wind_col][time]
 
-WIND_COLS = ['WMO_WIND',
- 'USA_WIND',
- 'CMA_WIND',
- 'HKO_WIND',
- 'NEWDELHI_WIND',
- 'REUNION_WIND',
- 'BOM_WIND',
- 'NADI_WIND',
- 'WELLINGTON_WIND',
- 'DS824_WIND',
- 'TD9636_WIND',
- 'TD9635_WIND',
- 'NEUMANN_WIND',
- 'MLC_WIND']
+            # calculate wind field
+            wind_field = []
+            for distance in h_dists:
+                wind_speed = holland_wind_field(r, wind, pressure, pressure_env, distance, lat)
+                wind_field.append(wind_speed)
 
+            # reformat time string
+            iso_time = ibtracs_gdf['ISO_TIME'][time]
+            date, time = iso_time.split(" ")
+            date = date[5:].replace("-", "")
+            time = time[:2]
 
-STORM_1MIN_WIND_FACTOR = 0.88
-"""Scaling factor used in Bloemendaal et al. (2020) to convert 1-minute sustained wind speeds to
-10-minute sustained wind speeds.
+            # if non-neglible wind, append to dataframe
+            if sum(wind_field) > 0:
+                feature_gdf[f"wnd{date}_{time}"] = wind_field
+        else:
+            logging.warning(f"No pressure drop for time {time}, skipping wind speed calculation.")
 
-Bloemendaal et al. (2020): Generation of a global synthetic tropical cyclone hazard
-dataset using STORM. Scientific Data 7(1): 40.""";
-
-DEF_ENV_PRESSURE = 1010
-"""Default environmental pressure"""
-
-# Basin-specific default environmental pressure
-BASIN_ENV_PRESSURE = {
-    '': DEF_ENV_PRESSURE,
-    'EP': 1010, 'NA': 1010, 'SA': 1010,
-    'NI': 1005, 'SI': 1005, 'WP': 1005,
-    'SP': 1004,
-}
-
-
-
+        return feature_gdf
 
 #--------------------------------------------------------------------------------------------------------
 # FABDEM (no longer using below this)
