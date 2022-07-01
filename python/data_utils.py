@@ -6,6 +6,7 @@ from os.path import join
 import logging
 from pathlib import Path
 import requests
+import pandas as pd
 import geopandas as gpd
 import rtree
 from tqdm import tqdm
@@ -145,45 +146,47 @@ def nmile_to_km(x):
     return x * 1.852
 
 
-def process_ibtracs(ibtracs_df):
+def process_ibtracs(ibtracs_df, storm):
     """Process IBTrACS wind and radius of max wind data."""
+    logger = logging.getLogger(f"data_collection.{storm}")
     # set up geometry
     ibtracs_gdf = ibtracs_df
     for col in ["LAT", "LON"]: ibtracs_gdf[col] = pd.to_numeric(ibtracs_gdf[col])
     ibtracs_gdf["geometry"] = gpd.points_from_xy(ibtracs_gdf.LON, ibtracs_gdf.LAT)
-    del ibtracs_gdf["LAT"]
-    del ibtracs_gdf["LON"]
     ibtracs_gdf = ibtracs_gdf.set_crs("EPSG:4326")
     assert not ibtracs_gdf.BASIN.isna().any(), "BASIN has NaN values"
 
     # grab most-recorded wind speed if WMO not available
     if ibtracs_gdf.WMO_WIND.isna().all():
+        logger.info("Not using WMO Winds.")
         wind_col = ibtracs_gdf[WIND_COLS].notna().sum().idxmax()
         agency = wind_col.split("_")[0]
+        logger.info(f"Agency: {agency}")
         pressure_col = f"{agency}_PRES"
         rmw_col = f"{agency}_RMW"
 
         # rescale wind speed to MSW10
-        scale, shift = IBTRACS_AGENCY_10MIN_WIND_FACTOR[agency]
+        scale, shift = IBTRACS_AGENCY_10MIN_WIND_FACTOR[agency.lower()]
         ibtracs_gdf[f'{agency}_wind'.upper()] = pd.to_numeric(ibtracs_gdf[f'{agency}_wind'.upper()])
         ibtracs_gdf[f'{agency}_wind'.upper()] *= scale
         ibtracs_gdf[f'{agency}_wind'.upper()] += shift
     else:
+        logger.info("Using WMO Winds.")
         wind_col = "WMO_WIND"
         pressure_col = "WMO_PRES"
-        agency = ibtracs_gdf["WMO_AGENCY"].mode()
-        rmw_col = f"{agency}_RMW".upper() # double-check this
+        agency = ibtracs_gdf["WMO_AGENCY"].mode()[0]
+        logger.info(f"Agency: {agency}")
+        rmw_col = f"USA_RMW"  # possibly use different later
 
         # rescale wind speed to MSW10
         scale, shift = IBTRACS_AGENCY_10MIN_WIND_FACTOR[agency]
-        ibtracs_gdf[f'{agency}_wind'.upper()] = pd.to_numeric(ibtracs_gdf[f'{agency}_wind'.upper()])
-        ibtracs_gdf[f'{agency}_wind'.upper()] *= scale
-        ibtracs_gdf[f'{agency}_wind'.upper()] += shift
+        ibtracs_gdf[wind_col] = pd.to_numeric(ibtracs_gdf[wind_col])
+        ibtracs_gdf[wind_col] *= scale
+        ibtracs_gdf[wind_col] += shift
 
-    logging.info(f"Agency: {agency}")
-    logging.info(f"RMW column: {rmw_col}, wind column: {wind_col}, pressure column {pressure_col}")
-    logging.info(f"Scale: {scale}")
-    logging.info(f"Shift: {shift}")
+    logger.info(f"RMW column: {rmw_col}, wind column: {wind_col}, pressure column {pressure_col}")
+    logger.info(f"Scale: {scale}")
+    logger.info(f"Shift: {shift}")
 
     # fix timestamps formatting
     newtimes = []
@@ -197,8 +200,7 @@ def process_ibtracs(ibtracs_df):
 
     ibtracs_gdf['ISO_TIME'] = newtimes
     ibtracs_gdf = ibtracs_gdf.dropna(subset=wind_col).reset_index()
-    return ibtracs_gdf
-
+    return ibtracs_gdf, wind_col, pressure_col, rmw_col
 
 
 def haversine(lon1, lat1, lon2_lst, lat2_lst):
@@ -220,6 +222,7 @@ def haversine(lon1, lat1, lon2_lst, lat2_lst):
     r_e = 6371
     return c * r_e
 
+
 def holland_wind_field(r, wind, pressure, pressure_env, distance, lat):
     """Code from J. Verschuur. Uses different rho-value to Holland (1980).
 
@@ -240,7 +243,7 @@ def holland_wind_field(r, wind, pressure, pressure_env, distance, lat):
 
     """
 
-    rho = 1.15  # Holland (1980), 1.10 Verschuur
+    rho = 1.15  # Holland (1980) air density
     lat *= np.pi / 180
     distance *= 1000
     r *= 1000
@@ -261,7 +264,7 @@ def holland_wind_field(r, wind, pressure, pressure_env, distance, lat):
     return Vg
 
 
-def get_wind_fields(ibtracs_gdf,feature_gdf):
+def get_wind_field(ibtracs_gdf, feature_gdf, units_df, wind_col, pressure_col, rmw_col):
     # get centroids
     centroids = feature_gdf.to_crs("EPSG:3857").centroid.to_crs("EPSG:4326")
     wind_tracks = ibtracs_gdf.geometry

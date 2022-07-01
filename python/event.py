@@ -74,17 +74,17 @@ class Event:
             storm_file = open(join(self.bd, "logfiles", 'storm_file.txt'), 'r')
             if f"{self.storm}_{self.region}_{subregion}" not in storm_file:
                 self.logger.info(f'\nProcessing subregion {subregion}\n')
-                self.get_all_features(subregion, recalculate=True, feature_list=None)
+                self.get_all_features(subregion, recalculate=True, feature_list=feature_list)
 
                 # save to output, feature_stats directory
                 self.feature_gdf[subregion].to_file(join(self.wd, "feature_stats", f"{self.storm}_{self.region}_{subregion}_{self.stagger}.shp"))
-                self.logger.info(f"Finished processing Storm {self.storm.captalize()} in "\
-                             f"{self.region.capitalize()}, subregion {subregion.capitalize()}.")
+                self.logger.info(f"Finished processing Storm {self.storm.capitalize()} in "\
+                             f"{self.region.capitalize()}, subregion {subregion}.")
                 storm_file.close()
 
                 # append event and subregion to logfile
                 storm_file = open(join(self.bd, "logfiles", 'storm_file.txt'), 'a')
-                storm_file.write(f"{self.storm}_{self.region}_{subregion}")
+                storm_file.write(f"{self.storm}_{self.region}_{subregion}\n")
                 storm_file.close()
 
 
@@ -131,9 +131,13 @@ class Event:
 
     def save_gdf(self, subregion):
         """Save/update the GeoDataFrame as a shapefile."""
+        feature_gdf = self.feature_gdf[subregion]
+
+        # make sure only saves if correct size
+        assert len(feature_gdf) == 64 * 64, f"Grid not of size 64x64"
 
         file = join(self.indir, f'feature_stats_{subregion}_{self.stagger}.shp')
-        self.feature_gdf[subregion].to_file(file)
+        feature_gdf.to_file(file)
         self.logger.info(f"Saved as {file}...\n")
 
 
@@ -375,7 +379,7 @@ class Event:
         if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
 
         if "dist_pw" not in self.feature_gdf[subregion]:
-            self.logger.info(f"Recalculating distances to water with occurence threshold={thresh}...")
+            self.logger.info(f"Recalculating distances to water with occurrence threshold={thresh}...")
             feature_gdf = self.feature_gdf[subregion]
 
             if "dist_pw" not in self.feature_gdf[subregion]:
@@ -465,7 +469,6 @@ class Event:
         if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
 
         if "mslp" not in self.feature_gdf[subregion]:
-            self.logger.info("Calculating ERA5 climate variables...")
             feature_gdf = self.feature_gdf[subregion]
 
             # set up Google Earth Engine for subregion
@@ -477,6 +480,7 @@ class Event:
             feature_names = ['mslp', 'sp']
             features = ['mean_sea_level_pressure', 'surface_pressure']
             for feature, feature_name in zip(features, feature_names):
+                self.logger.info(f"Calculating ERA5 {feature_name}...")
                 feat = ee.Image(ee.ImageCollection("ECMWF/ERA5/DAILY")
                                   .select(feature)
                                   .filterBounds(aoi_ee)
@@ -485,19 +489,26 @@ class Event:
                                   .clip(aoi_ee))
 
                 # unmask using the spatial average
-                spatial_mean = feat.reduceRegions(aoi_ee, ee.Reducer.mean(), scale=self.gridsize)
+                spatial_mean = feat.reduceRegions(aoi_ee,
+                                                  ee.Reducer.mean(),
+                                                  crs="EPSG:4326",
+                                                  scale=self.gridsize)
                 spatial_mean = spatial_mean.getInfo()['features'][0]['properties']['mean']
                 feat = feat.unmask(spatial_mean)
 
                 # Add reducer output to the Features in the collection.
                 mean_feat = feat.reduceRegions(collection=grid_ee,
-                                                         reducer=ee.Reducer.mean(), scale=self.gridsize)
+                                                         reducer=ee.Reducer.mean(),
+                                                         scale=self.gridsize,
+                                                         crs="EPSG:4326")
+
                 feat_list = mean_feat.aggregate_array('mean').getInfo()
                 feature_gdf[feature_name] = feat_list
 
             # save output
             self.feature_gdf[subregion] = feature_gdf
             self.save_gdf(subregion)
+
 
     def get_soilcarbon(self, subregion):
         """Get soil organic carbon from Google Earth Engine."""
@@ -592,6 +603,7 @@ class Event:
             # mangrove_mask = mangrove.eq(0)
             # ndvi_masked = ndvi.updateMask(mangrove_mask)
             # ndvi = ndvi_masked.unmask(0)
+            ndvi = ndvi.unmask(0)  # remove this line if using mangroves
 
             # calculate mean over feature collection
             mean_ndvi = ndvi.reduceRegions(collection=grid_ee,
@@ -603,14 +615,8 @@ class Event:
             self.save_gdf(subregion)
 
 
-    # takes a while...
     def get_wind_fields(self, subregion):
         """Get wind fields from IBTrACs data using Holland (1980) method."""
-
-        # TODO: change WMO wind agency method for RMW
-        # change messy for loop formatting
-        # make more modular
-
         if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
 
         if not any("wnd" in col for col in self.feature_gdf[subregion].columns):
@@ -628,8 +634,8 @@ class Event:
                 units_df = pd.read_csv(join(self.wd, "ibtracs_since1980.csv"), dtype=str, header=0)[0:1]
 
             # process IBTrACS data
-            ibtracs_gdf = process_ibtracs(ibtracs_gdf)
-            feature_gdf = get_wind_field(ibtracs_gdf, feature_gdf)
+            ibtracs_gdf, wind_col, pressure_col, rmw_col = process_ibtracs(ibtracs_gdf, self.storm)
+            feature_gdf = get_wind_field(ibtracs_gdf, feature_gdf, units_df, wind_col, pressure_col, rmw_col)
 
             # save average wind field
             timemask = ["wnd" in col for col in feature_gdf.columns]
