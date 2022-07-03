@@ -34,7 +34,7 @@ def reshape_df(df, nrows, ncols, features):
 
 def format_gdf(filelist, columns, binary=True, thresh=0.5, storm=None):
     """Format GeoDataframe from list of files."""
-    l = [gpd.read_file(filename) for filename in filelist]
+    l = [gpd.read_file(filename, SHAPE_RESTORE_SHX='YES') for filename in filelist]
     gdf = pd.concat(l, axis=0)
     gdf = gdf[columns]
     

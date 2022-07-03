@@ -35,7 +35,7 @@ def worker_configurer(queue):
 
 def listener_process(queue, configurer):
     """
-    This is the listener process top-level loop: wait for logging events
+    Listener process top-level loop: wait for logging events.
     (LogRecords)on the queue and handle them, quit when you get a None for a
     LogRecord.
     """
@@ -60,7 +60,7 @@ def process_events(row, queue, configurer):
 
     configurer(queue)
     logger = logging.getLogger(f"data_collection.{storm}")
-    log_file_path = join(bd, 'logfiles') # Wherever your log files live
+    log_file_path = join(bd, 'logfiles')
     fh = logging.FileHandler(join(log_file_path, f"data_collection.{storm}.log"), 'w')
     f = logging.Formatter('%(asctime)s %(processName)-10s %(name)s %(levelname)-8s %(message)s')
     fh.setFormatter(f)
@@ -68,9 +68,8 @@ def process_events(row, queue, configurer):
 
     try:
         event = Event(storm, region, nsubregions, wd, bd)
-        event.process_all_subregions(feature_list=["wind_fields"])
+        event.process_all_subregions()
     except Exception:
-        pass
         logger.error(traceback.format_exc())
 
 
@@ -79,35 +78,15 @@ def main():
     df = pd.read_csv(join(wd, "current_datasets.csv"))
     events = [row for _, row in df.iterrows()]
 
-    # start a listener for processing
-    # setting max of queue to 4 to prevent overloading machine (-1)
-    # queue = multiprocessing.Queue(4)
-    # listener = multiprocessing.Process(target=listener_process,
-    #                                    args=(queue, listener_configurer))
-    # listener.start()
-    #
-
-    #
-    # # start the workers processing the events
-    # workers = []
-    # for event in events:
-    #     worker = multiprocessing.Process(target=process_events,
-    #                                      args=(event, queue, worker_configurer))
-    #     workers.append(worker)
-    #     worker.start()
-    # for w in workers:
-    #     w.join()
-    #
-
     # start the listener for pool
     manager = multiprocessing.Manager()
     queue = manager.Queue()
-    listener = multiprocessing.Process(target=listener_process,
-                                       args=(queue, listener_configurer))
+    listener = multiprocessing.Process(target=listener_process, args=(queue, listener_configurer))
     listener.start()
 
     # start the pool of workers
-    with multiprocessing.Pool(3) as pool:
+    npools = multiprocessing.cpu_count() - 1
+    with multiprocessing.Pool(npools) as pool:
         params = []
         for event in events:
             params.append((event, queue, worker_configurer))
