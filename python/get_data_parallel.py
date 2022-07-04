@@ -52,6 +52,7 @@ def listener_process(queue, configurer):
             print('Failure in listener_process:', file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
 
+
 # main function of script
 def process_events(row, queue, configurer):
     storm = row['event']
@@ -71,6 +72,7 @@ def process_events(row, queue, configurer):
         event.process_all_subregions()
     except Exception:
         logger.error(traceback.format_exc())
+        continue
 
 
 def main():

@@ -488,6 +488,7 @@ class Event:
                                   .mean()
                                   .clip(aoi_ee))
 
+
                 # unmask using the spatial average
                 spatial_mean = feat.reduceRegions(aoi_ee,
                                                   ee.Reducer.mean(),
