@@ -45,7 +45,7 @@ dependencies:
   - pytorch                 # neural networks
   # - pyg                     # graph neural networks
 
-# conda env create -f environment.yml
+# conda env create -f environment.yml --experimental-solver=libmamba python=3.9
 # conda activate hybridmodels
 # python -m ipykernel install --user --n hybridmodels
 
