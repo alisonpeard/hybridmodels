@@ -1,4 +1,4 @@
-name: hybridmodels
+name: hybridmodels-datacol
 # If issues with pyg use wheels installation described in pyg docs
 channels:
   - conda-forge

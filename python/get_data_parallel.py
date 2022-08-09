@@ -1,59 +1,59 @@
+"""
+Get data, using multiple cores at once.
+
+Loads list of events from ../data/csvs/current_datasets.csv and processes those which have 'yes' in
+the to_process column.
+
+Before Running:
+---------------
+Check the contents of current_datasets.csv is correct and alter the settings below.
+TODO: Change this to command line flags later.
+
+Settings:
+---------
+TEST_RUN : bool
+    Test multiprocessing and logging working as expected without processing data.
+feature_list : list or None
+    Only calculate features in feature_list, or None to calculate all features.
+recalculate_all : bool
+    Recalculate the entire dataset from scratch. If False only recalculates or appends
+    features in features_list, depending on recalculate_features.
+recalculate_features : bool
+    Recalculate all the features in feature_list. If False only features which haven't
+    already been calculated are appended. If True everything is recalculated.
+
+Use:
+----
+>>> conda activate hybridmodels
+>>> cd ~/Documents/DPhil/hybridmodels/python
+>>> python get_data_parallel.py
+"""
+
+# settings
+TEST_RUN = False     # set TRUE to check logging and multiprocessing behaving correctly
+feature_list = ['aqueduct']  # ["aqueduct"]  # None forall features
+recalculate_all = False   # false to just append to files
+recalculate_features = True
+
+# imports
 from os.path import join, dirname
 import logging
 import logging.handlers
 import multiprocessing
 import traceback
 import pandas as pd
-from event import Event
 
+from event import Event
+from multiprocessing_logging import listener_configurer, worker_configurer, listener_process
+
+
+# environment
 bd = dirname(__file__)
 wd = join(bd, "..", "data")
-
-log_file_path = join(bd, 'logfiles') # Wherever your log files live
+log_file_path = join(bd, 'logfiles')
 log_name = 'data_collection'
 
-# next three functions enable logging with multiprocessing
-def listener_configurer():
-    root = logging.getLogger()
-    fh = logging.FileHandler(join(log_file_path, f"{log_name}.log"), 'w')
-    fh.setLevel(logging.INFO)
-    sh = logging.StreamHandler()
-    sh.setLevel(logging.DEBUG)
-    f = logging.Formatter('%(asctime)s %(processName)-10s %(name)s %(levelname)-8s %(message)s')
-    fh.setFormatter(f)
-    root.addHandler(fh)
-
-def worker_configurer(queue):
-    root = logging.getLogger()
-    fh = logging.handlers.QueueHandler(queue)  # Just the one handler needed
-    fh.setLevel(logging.INFO)
-    sh = logging.StreamHandler()
-    sh.setLevel(logging.DEBUG)
-    root.addHandler(fh)
-    root.addHandler(sh)
-    root.setLevel(logging.INFO)
-
-def listener_process(queue, configurer):
-    """
-    Listener process top-level loop: wait for logging events.
-    (LogRecords)on the queue and handle them, quit when you get a None for a
-    LogRecord.
-    """
-    configurer()
-    while True:
-        try:
-            record = queue.get()  # pop latest item from the queue
-            if record is None:  # We send this as a sentinel to tell the listener to quit.
-                break
-            logger = logging.getLogger(record.name)
-            logger.handle(record)  # No level or filter logic applied - just do it!
-        except Exception:
-            import sys, traceback
-            print('Failure in listener_process:', file=sys.stderr)
-            traceback.print_exc(file=sys.stderr)
-
-
-# main function of script
+# function for workers
 def process_events(row, queue, configurer):
     storm = row['event']
     region = row['region']
@@ -61,29 +61,40 @@ def process_events(row, queue, configurer):
 
     configurer(queue)
     logger = logging.getLogger(f"data_collection.{storm}")
-    log_file_path = join(bd, 'logfiles')
-    fh = logging.FileHandler(join(log_file_path, f"data_collection.{storm}.log"), 'w')
-    f = logging.Formatter('%(asctime)s %(processName)-10s %(name)s %(levelname)-8s %(message)s')
+    fh = logging.FileHandler(join(log_file_path, f"data_collection.{storm}.log"), 'a')
+    #f = logging.Formatter('%(asctime)s %(processName)-10s %(name)s %(levelname)-8s %(message)s')
+    f = logging.Formatter('%(asctime)s %(name)s %(levelname)-8s: %(message)s')
     fh.setFormatter(f)
+    sh = logging.StreamHandler()
+    sh.setFormatter(f)
     logger.addHandler(fh)
+    logger.addHandler(sh)
 
     try:
         event = Event(storm, region, nsubregions, wd, bd)
-        event.process_all_subregions()
+        if not TEST_RUN:
+            logger.info(f"Setting up Storm {storm.capitalize()} Event instance for "\
+                    f"{region.capitalize()} with {nsubregions} subregions.")
+            event.make_grids()
+            event.process_all_subregions(recalculate_all, recalculate_features, feature_list)
+            # event.get_all_features(0, recalculate=True)  # just one event
+            # event.get_era5(0)  # just one field for one event
+        else:
+            logger.info(event)
     except Exception:
         logger.error(traceback.format_exc())
-        continue
 
 
 def main():
     # load and parse data
-    df = pd.read_csv(join(wd, "current_datasets.csv"))
+    df = pd.read_csv(join(wd, "csvs", "current_datasets.csv"))
+    df = df[df.to_process == "yes"]  # only process selected events
     events = [row for _, row in df.iterrows()]
 
     # start the listener for pool
     manager = multiprocessing.Manager()
-    queue = manager.Queue()
-    listener = multiprocessing.Process(target=listener_process, args=(queue, listener_configurer))
+    queue = manager.Queue(200)
+    listener = multiprocessing.Process(target=listener_process, args=(queue, listener_configurer, log_name, log_file_path))
     listener.start()
 
     # start the pool of workers

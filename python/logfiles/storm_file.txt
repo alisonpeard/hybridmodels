@@ -1,2 +1,0 @@
-Delete event line to recalculate it.
-------------------------------------
