@@ -34,6 +34,8 @@ dependencies:
   - geemap                  # super helpful for GEE API
   - richdem
   - pyogrio                 # required for dask_geopandas.read_file()
+  - dask
+  - distributed
   # APIs
   - earthengine-api         # access Google Earth Engine
   - sentinelhub             # access SentinelHub

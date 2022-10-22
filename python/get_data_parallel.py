@@ -30,9 +30,9 @@ Use:
 """
 
 # settings
-TEST_RUN = False     # set TRUE to check logging and multiprocessing behaving correctly
-feature_list = ['aqueduct']  # ["aqueduct"]  # None forall features
-recalculate_all = False   # false to just append to files
+TEST_RUN = False             # set TRUE to check logging and multiprocessing behaving correctly
+feature_list = None # # None forall features
+recalculate_all = False      # false to just append to files
 recalculate_features = True
 
 # imports
@@ -46,7 +46,6 @@ import pandas as pd
 from event import Event
 from multiprocessing_logging import listener_configurer, worker_configurer, listener_process
 
-
 # environment
 bd = dirname(__file__)
 wd = join(bd, "..", "data")
@@ -57,12 +56,11 @@ log_name = 'data_collection'
 def process_events(row, queue, configurer):
     storm = row['event']
     region = row['region']
-    nsubregions = row['nsubregions']
+    nsubregions = int(row['nsubregions'])
 
     configurer(queue)
     logger = logging.getLogger(f"data_collection.{storm}")
     fh = logging.FileHandler(join(log_file_path, f"data_collection.{storm}.log"), 'a')
-    #f = logging.Formatter('%(asctime)s %(processName)-10s %(name)s %(levelname)-8s %(message)s')
     f = logging.Formatter('%(asctime)s %(name)s %(levelname)-8s: %(message)s')
     fh.setFormatter(f)
     sh = logging.StreamHandler()
@@ -77,7 +75,7 @@ def process_events(row, queue, configurer):
                     f"{region.capitalize()} with {nsubregions} subregions.")
             event.make_grids()
             event.process_all_subregions(recalculate_all, recalculate_features, feature_list)
-            # event.get_all_features(0, recalculate=True)  # just one event
+            # event.get_all_features(2, recalculate_all, recalculate_features, feature_list)  # just one event
             # event.get_era5(0)  # just one field for one event
         else:
             logger.info(event)

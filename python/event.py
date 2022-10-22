@@ -1,4 +1,5 @@
 from os.path import join, exists
+from os import remove
 from ast import literal_eval
 import logging
 
@@ -8,6 +9,11 @@ import matplotlib.pyplot as plt
 from shapely.geometry import box, shape
 from shapely.ops import nearest_points
 
+# for deltares
+import dask.distributed
+import xarray as xr
+import pystac_client
+
 import ee
 import geemap  # need later
 
@@ -16,6 +22,13 @@ from model_utils import *
 
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
+
+global default_features
+global pwater_thresh
+
+default_features = ["flood", "elevation", "permwater", "pw_dists", "precipitation",
+                    "era5", "soilcarbon","soiltemp", "mangroves", "ndvi", "wind_fields", "aqueduct",
+                    "lulc", "deltares"]
 
 
 class Event:
@@ -64,10 +77,6 @@ class Event:
     >>> event.make_grids()
     >>> event.process_all_subregions(recalculate_all=False, recalculate_features=False, feature_list=None)
     """
-
-
-    default_features = ["flood", "elevation", "permwater", "pw_dists", "precipitation",
-                    "era5", "soilcarbon", "mangroves", "ndvi", "wind_fields", "aqueduct"]
 
 
     def __init__(self, storm, region, nsubregions, wd, bd, gridsize=500):
@@ -192,15 +201,16 @@ class Event:
 
     def make_grids(self):
         """Calculate all the grids."""
-        grids = []
         for n in self.subregions:
-            grids.append(self.get_grid(n))
+            self.get_grid(n)
 
 
     def get_grid(self, subregion):
         """Make grid from geoJSON file."""
-        geoJSON = literal_eval(pd.read_csv(join(self.wd, "csvs", "event_geojsons.csv"),
-                                           index_col="region").loc[self.region][0])
+#         geoJSON = literal_eval(pd.read_csv(join(self.wd, "csvs", 'event_geojsons.csv'),
+#                                            index_col="region").loc[self.region][0])
+        geoJSON = literal_eval(pd.read_csv(join(self.wd, "csvs", "current_datasets.csv"),  # 'event_geojsons.csv'
+                                           index_col="region").loc[self.region]['subregion_geojsons'])  # [0]
 
         poly = [shape(x['geometry']) for x in geoJSON['features']]
         poly = gpd.GeoDataFrame({"geometry": poly[subregion]}, index=[0])
@@ -217,13 +227,15 @@ class Event:
         grid_pm = make_grid(*aoi_pm.total_bounds, length=self.gridsize, wide=self.gridsize)
         grid_lonlat = grid_pm.to_crs("EPSG:4326")
 
+        grid_lonlat.to_file(join(self.indir, f'grid_lonlat_{subregion}.gpkg'))
+
         self.aoi_pm[subregion] = aoi_pm
         self.aoi_lonlat[subregion] = aoi_lonlat
         self.grid_pm[subregion] = grid_pm
         self.grid_lonlat[subregion] = grid_lonlat
 
 
-    def get_flood(self, subregion, recalculate=False):
+    def get_flood(self, subregion, recalculate=False, cols=['det_method', 'obj_desc']):
         """Calculate flood fractions per gridcell."""
 
         if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
@@ -237,16 +249,28 @@ class Event:
             aoi_lonlat  = self.aoi_lonlat[subregion]
             grid_pm = self.grid_pm[subregion]
 
-            assert flood.geometry.intersects(aoi_lonlat).any(),\
-                    f"Flood file does not intersect subregion {subregion} for {self.region.upper()}."
+            assert aoi_lonlat.crs == flood.crs,\
+                    f"Flood file and subregion geometries have different crs {subregion} for {self.region.upper()}."
 
             flood = gpd.overlay(flood, aoi_lonlat, how="intersection")
+            assert len(flood) > 0,\
+                    f"Flood file does not intersect subregion {subregion} for {self.region.upper()}."
 
             flood_pm = flood.to_crs("EPSG:3857")
             floodfrac_gdf = get_grid_intersects(flood_pm, grid_pm)
+            feature_gdf["floodfrac"] = floodfrac_gdf["floodfrac"]
+
+            try:
+                # get extra data on flood detection
+                grid_flooded = gpd.overlay(feature_gdf.reset_index(drop=False), flood, how='intersection', keep_geom_type=False)
+                grid_flooded = grid_flooded[['index'] + cols].groupby('index').agg(pd.Series.mode)
+                feature_gdf  = pd.merge(feature_gdf, grid_flooded, left_index=True, right_index=True, how='left').fillna("")
+            except Exception as e:
+                self.logger.warning(f"{self.storm}_{self.region}_{subregion}: error adding extra flood info:\n{e}\nCreating empty fields")
+                for col in cols:
+                    feature_gdf[col] =  [""] * len(feature_gdf)
 
             # save the feature_stats shapefile with flood fraction
-            feature_gdf["floodfrac"] = floodfrac_gdf["floodfrac"]
             self.feature_gdf[subregion] = feature_gdf
             self.save_gdf(subregion)
 
@@ -389,14 +413,14 @@ class Event:
                         floodfrac = flood_present.reduceRegions(collection=grid_ee, reducer=ee.Reducer.mean(), scale=self.gridsize)
                         aqueduct_list = floodfrac.aggregate_array('mean').getInfo()
                         feature_gdf[f"aqueduct_{rp}"] = aqueduct_list
+                        feature_gdf[f"aqueduct_{rp}"] = feature_gdf[f"aqueduct_{rp}"].replace('', 0.0)
                         corr = feature_gdf['floodfrac'].corr(feature_gdf[f"aqueduct_{rp}"])
-                        assert not np.isnan(corr), f"Got a NaN correlation for RP {rp}"
+                        assert not np.isnan(corr), f"Got a NaN correlation for RP {rp}."
                         corrs[rp] = corr
 
                     except Exception as e:
-                        self.logger.error(f"{self.storm}, {self.region}, {subregion}:\n{e}"
-                                          "\nCreating empty fields.")
-                        feature_gdf[f"aqueduct_{rp}"] = [""] * len(feature_gdf)
+                        self.logger.error(f"{self.storm}, {self.region}, {subregion}:\n{e}")
+                        # feature_gdf[f"aqueduct_{rp}"] = [""] * len(feature_gdf)
 
                 # choose rp most correlated to floodfrac
                 best_rp = max(corrs, key=corrs.get)
@@ -408,6 +432,65 @@ class Event:
                 self.logger.error(f"Error for Aqueduct data for {self.storm}, {self.region}, {subregion}"\
                                     f"\n{e}\nCreating empty fields.")
                 feature_gdf["aqueduct"] = [""] * len(feature_gdf)
+
+            self.feature_gdf[subregion] = feature_gdf
+            self.save_gdf(subregion)
+
+
+    def get_deltares(self, subregion, recalculate=False):
+        """Download Deltares flood data.
+
+        Deltares coastal flood hazard data.
+        """
+        if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
+
+        # get data from Deltares
+        if "deltares" not in self.feature_gdf[subregion] or recalculate:
+            feature_gdf = self.feature_gdf[subregion]
+
+            try:
+                rp = 100
+                slr = 2018
+                self.logger.info(f"Calculating Deltares flood map RP{rp}.")
+                minx, miny, maxx, maxy = feature_gdf.unary_union.bounds
+
+                # load deltares data
+                client = dask.distributed.Client(processes=False)
+                catalog = pystac_client.Client.open("https://planetarycomputer.microsoft.com/api/stac/v1/")
+                search = catalog.search(
+                    collections=["deltares-floods"],
+                    query={
+                        "deltares:dem_name": {"eq": "NASADEM"},
+                        "deltares:sea_level_year": {"eq": slr},
+                        "deltares:return_period": {"eq": rp},
+                    },
+                )
+                item = next(search.get_items())
+                url = item.assets["index"].href
+                ds = xr.open_dataset(f"reference::{url}", engine="zarr", consolidated=False, chunks={})
+                ds_aoi = ds.sel(lat=slice(miny, maxy), lon=slice(minx, maxx), time=ds.time[0])
+                flooded = ds_aoi.inun.where(ds_aoi.inun > 0, 0)
+                flooded = flooded.where(flooded==0, 1)
+                flooded.rio.set_crs('epsg:4326');
+
+                # convert to src and overlay to feature stats grid
+                filename = join('tempfiles', f'src_temp_{self.region}_{subregion}.tiff')
+                flooded.rio.to_raster(filename)
+                src = rasterio.open(filename)
+                remove(filename)
+
+                feature_gen = rasterio.features.dataset_features(src, geographic=True, as_mask=True)
+                feature_list = [feature for feature in feature_gen]
+                geom = [shape(i['geometry']) for i in feature_list]
+                values = [i['properties']['val'] for i in feature_list]
+                flood_gdf = gpd.GeoDataFrame({'geometry':geom}).set_crs(4326)
+
+                feature_gdf = get_grid_intersects(flood_gdf, feature_gdf, floodcol='deltares')
+
+            except Exception as e:
+                self.logger.error(f"Error for Deltares data for {self.storm}, {self.region}, {subregion}:"\
+                                    f"\n{e}\n\nCreating empty fields.")
+                feature_gdf["deltares"] = [""] * len(feature_gdf)
 
             self.feature_gdf[subregion] = feature_gdf
             self.save_gdf(subregion)
@@ -517,7 +600,7 @@ class Event:
             self.save_gdf(subregion)
 
 
-    def get_pw_dists(self, subregion, recalculate=False, thresh=60):
+    def get_pw_dists(self, subregion, recalculate=False, thresh=pwater_thresh):
         """Calculate cell distances and slopes to nearest permanent water."""
 
         if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
@@ -527,7 +610,7 @@ class Event:
             feature_gdf = self.feature_gdf[subregion]
 
             try:
-                if "dist_pw" not in self.feature_gdf[subregion]:
+                if "elevation" not in self.feature_gdf[subregion]:
                     self.get_elevation(subregion)
 
                 if self.connected_to_gee != subregion:
@@ -545,7 +628,7 @@ class Event:
                         nearest = nearest_points(row[geom_col], water_union)[1]
                         dist = row[geom_col].distance(nearest)
                         dist_list.append(dist)
-                    # Return column
+
                     return dist_list
 
                 jrc_permwater = (ee.Image("JRC/GSW1_3/GlobalSurfaceWater")
@@ -558,7 +641,6 @@ class Event:
 
                 water_gdf = geemap.ee_to_geopandas(water)
                 water_gdf = water_gdf[water_gdf.label == 1]
-                # water_gdf.plot(cmap="YlGnBu")
 
                 dist_list = dist_to_water(feature_gdf, water_gdf)
                 feature_gdf['dist_pw'] = dist_list
@@ -620,8 +702,47 @@ class Event:
             self.save_gdf(subregion)
 
 
+
+    def get_lulc(self, subregion, recalculate=False):
+        """Land use and land cover."""
+
+        if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
+
+        if "lulc" not in self.feature_gdf[subregion] or recalculate:
+            feature_gdf = self.feature_gdf[subregion]
+
+            # set up Google Earth Engine for subregion
+            if self.connected_to_gee != subregion: self.start_gee(subregion)
+            aoi_ee = self.aoi_ee[subregion]
+            grid_ee = self.grid_ee[subregion]
+
+            self.logger.info(f"Calculating dominant LULC type per grid cell...")
+            try:
+                feat = ee.Image(ee.ImageCollection("ESA/WorldCover/v100")
+                                  .filterBounds(aoi_ee)
+                                  .mode()
+                                  .clip(aoi_ee)
+                                  .unmask(0))
+
+                # Add reducer output to the Features in the collection.
+                mode_feat = feat.reduceRegions(collection=grid_ee,
+                                               reducer=ee.Reducer.mode(),
+                                               scale=self.gridsize)
+                feat_list = mode_feat.aggregate_array('mode').getInfo()
+                feature_gdf['lulc'] = feat_list
+            except Exception as e:
+                self.logger.warning(f"Error for lulc for {self.storm}, {self.region}, {subregion}:"\
+                                    f"{e}\nCreating empty field.")
+                feature_gdf["lulc"] = [""] * len(feature_gdf)
+
+            # save output
+            self.feature_gdf[subregion] = feature_gdf
+            self.save_gdf(subregion)
+
+
+
     def get_era5(self, subregion, recalculate=False):
-        """ERA5 Daily MSLP and Surface pressure."""
+        """ERA5 Daily MSLP, surface pressure and (x, y) U10 wind components."""
 
         if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
 
@@ -634,8 +755,8 @@ class Event:
             grid_ee = self.grid_ee[subregion]
 
             # which features from ERA5 Daily Aggregates to use
-            feature_names = ['mslp', 'sp']
-            features = ['mean_sea_level_pressure', 'surface_pressure']
+            feature_names = ['mslp', 'sp', 'u10_u', 'u10_v']
+            features = ['mean_sea_level_pressure', 'surface_pressure', 'u_component_of_wind_10m', 'v_component_of_wind_10m']
 
             for feature, feature_name in zip(features, feature_names):
                 self.logger.info(f"Calculating ERA5 {feature_name}...")
@@ -658,9 +779,69 @@ class Event:
 
                     # Add reducer output to the Features in the collection.
                     mean_feat = feat.reduceRegions(collection=grid_ee,
-                                                             reducer=ee.Reducer.mean(),
-                                                             scale=self.gridsize,
-                                                             crs="EPSG:4326")
+                                                   reducer=ee.Reducer.mean(),
+                                                   scale=self.gridsize,
+                                                   crs="EPSG:4326")
+
+                    feat_list = mean_feat.aggregate_array('mean').getInfo()
+                    feature_gdf[feature_name] = feat_list
+
+                except Exception as e:
+                    self.logger.warning(f"Error for {feature_name} for {self.storm}, {self.region}, {subregion}:"\
+                                        f"{e}\nCreating empty field.")
+                    feature_gdf[feature_name] = [""] * len(feature_gdf)
+
+
+            # save output
+            self.feature_gdf[subregion] = feature_gdf
+            self.save_gdf(subregion)
+
+
+    def get_soiltemp(self, subregion, recalculate=False):
+        """ERA5 Land Monthly Averaged ECMWF Climate Reanalysis."""
+
+        if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
+
+        if "soil_temperature_level_1" not in self.feature_gdf[subregion] or recalculate:
+            feature_gdf = self.feature_gdf[subregion]
+
+            # set up Google Earth Engine for subregion
+            if self.connected_to_gee != subregion: self.start_gee(subregion)
+            aoi_ee = self.aoi_ee[subregion]
+            grid_ee = self.grid_ee[subregion]
+
+            # which features from ERA5 Daily Aggregates to use
+            feature_names = ['soiltemp1', 'soiltemp2']
+            features = ['soil_temperature_level_1', 'soil_temperature_level_2']
+
+            for feature, feature_name in zip(features, feature_names):
+                self.logger.info(f"Calculating ERA5 {feature_name}...")
+                try:
+                    # include one month in advance to make sure covered
+                    start = ee.Date(self.startdate).advance(-1, 'month')
+                    end = ee.Date(self.enddate)
+
+                    feat = ee.Image(ee.ImageCollection("ECMWF/ERA5_LAND/MONTHLY")
+                                      .select(feature)
+                                      .filterBounds(aoi_ee)
+                                      .filterDate(start, end)
+                                      .sort('system:time_start', False).first()
+                                      .clip(aoi_ee))
+
+
+                    # unmask using the spatial average
+                    spatial_mean = feat.reduceRegions(aoi_ee,
+                                                      ee.Reducer.mean(),
+                                                      crs="EPSG:4326",
+                                                      scale=self.gridsize)
+                    spatial_mean = spatial_mean.getInfo()['features'][0]['properties']['mean']
+                    feat = feat.unmask(spatial_mean)
+
+                    # Add reducer output to the Features in the collection.
+                    mean_feat = feat.reduceRegions(collection=grid_ee,
+                                                   reducer=ee.Reducer.mean(),
+                                                   scale=self.gridsize,
+                                                   crs="EPSG:4326")
 
                     feat_list = mean_feat.aggregate_array('mean').getInfo()
                     feature_gdf[feature_name] = feat_list
@@ -803,7 +984,11 @@ class Event:
 
 
     def get_wind_fields(self, subregion, recalculate=False):
-        """Get wind fields from IBTrACs data using Holland (1980) method."""
+        """Get wind fields from IBTrACs data using Holland (1980) method.
+
+        Adds wind field columns where wind is nonzero to feature GeoDataFrame and
+        average over all these wind field columns (i.e., over storm duration)
+        """
         if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
 
         if not any("wnd" in col for col in self.feature_gdf[subregion].columns) or recalculate:
@@ -837,3 +1022,15 @@ class Event:
 
             self.feature_gdf[subregion] = feature_gdf
             self.save_gdf(subregion)
+
+
+    def add_intermediates_to_event(self, subregion, features_to_process: dict, thresh=pwater_thresh):
+        """Helper function to for add_intermediate_features between cell and nearest water cell."""
+
+        if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
+        feature_gdf = self.feature_gdf[subregion]
+        feature_gdf = add_intermediate_features(feature_gdf, features_to_process, thresh=thresh)
+        self.feature_gdf[subregion] = feature_gdf
+
+
+# Helper functions to add auxilliary spatial features from data
