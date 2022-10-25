@@ -31,7 +31,7 @@ Use:
 
 # settings
 TEST_RUN = False             # set TRUE to check logging and multiprocessing behaving correctly
-feature_list = None # # None forall features
+feature_list = None  # None for all features or else ['feature1', 'feature2']
 recalculate_all = False      # false to just append to files
 recalculate_features = True
 

@@ -1,7 +1,7 @@
 """
-Functions to help modelling data.
+Functions to help post-processing and modelling data.
 """
-from os.path import join
+from os.path import join, basename
 import glob
 import warnings
 import numpy as np
@@ -19,56 +19,63 @@ lulc_categories = {'built_up': ['lulc__50'],
                                  'lulc__90', 'lulc__95', 'lulc_100'],
                    'water': ['lulc__80']
                   }
+lulc_cols = ['lulc__20', 'lulc__30', 'lulc__40', 'lulc__50', 'lulc__60', 'lulc__70', 'lulc__80', 'lulc__90', 'lulc__95', 'lulc_100']
 
 ## MAIN DATA-LOADING FUNCTIONS
-def load_raw_data(wd, features, temporal=False, binary=True):
+def load_raw_data(wd, features, temporal=False, binary=True, subset=''):
     """Load data from feature_stats: needs some processing to be usable."""
     # Load list of gdfs
     columns = features + ['storm', 'region', 'subregion', "geometry", "floodfrac"]
-    gdfs = load_all_gdfs(wd)
+    gdfs = load_all_gdfs(wd, subset=subset)
     gdfs, features, columns = process_winds(gdfs, temporal, features, columns)
     
     # one big GeoDataFrame
     gdf = pd.concat(gdfs)
+    gdf.attrs['transforms'] = {}
     gdf, columns = format_event_col(gdf, columns)
     if binary:
-        gdf, features, columns = binarise_feature(gdf, 'floodfrac', 'flood', data_utils.floodthresh, features, columns)
+        gdf, features, columns = binarise_feature(gdf, 'floodfrac', 'floodfrac', data_utils.floodthresh, features, columns)
+        gdf.attrs['transforms']['floodfrac'] = 'binarised flood fraction'
+    
     gdf = gdf.replace("", np.nan)
     gdf = clean_slope(gdf)
+    gdf.attrs['transforms']['slope'] = 'tidied-up slope'
     features_binary, _ = data_utils.split_features_binary_continuous(data_utils.binary_keywords, features)
+        
     if 'lulc' in features:
         gdf, features, _, columns, _ = one_hot_encode_feature(gdf, 'lulc', features_binary, features, columns)
-        
+        for lulc_col in lulc_cols:
+            if lulc_col not in [*gdf.columns]:
+                gdf[lulc_col] = [''] * len(gdf)
+                features.append(lulc_col)
+                columns.append(lulc_col)
+   
+    assert not gdf.isna().any().any(), f"{gdf.isna().any()[gdf.isna().any()].index[0]} has NaNs for {gdf.event[0]}."
+
     gdf = gdf[columns].dropna().reset_index(drop=True)
     return gdf, features, columns
 
 
-def load_spatial_data(wd):
+def load_spatial_data(wd, subset=''):
     """Load data from feature_stats_spatial: already processed."""
-    gdfs = load_all_gdfs(wd, 'feature_stats_spatial')
+    gdfs = load_all_gdfs(wd, 'feature_stats_spatial', subset)
     gdf = pd.concat(gdfs)
     return gdf
 
-## HELPER FUNCTIONS FOR LOADING
+
 def load_all_gdfs(wd, folder='feature_stats', subset=''):
     """Return all gdfs in a folder (and filter by subset string)."""
+    
     files = [filename for filename in glob.glob(join(wd, folder, "*.gpkg"))]
-    filemask = [subset in file for file in files]
-    files = list(compress(files, filemask))
+    
+    # make sure subset strings in files
+    if not subset=='':
+        subset = [f'{file}.gpkg' for file in [subset]]
+        filemask = [basename(file) in subset for file in files]
+        files = list(compress(files, filemask)) 
     gdfs = [gpd.read_file(filename, SHAPE_RESTORE_SHX='YES') for filename in files]
+    
     return gdfs
-
-
-def process_winds(gdfs, temporal, features, columns):
-    """Process winds for a list of GeoDataFrames and add to feature and column lists."""
-    if temporal:
-        gdfs = [get_wind_range(gdf, columns) for gdf in gdfs]
-        features = list(set(features + ['Tm6', 'Tm3', 'T']))
-    else:
-        columns = list(set(columns + ["wind_avg"]))
-        features = list(set(features + ['wind_avg']))
-        gdfs = [gdf.loc[:, columns] for gdf in gdfs]
-    return gdfs, features, columns
 
 
 def format_event_col(gdf, columns):
@@ -80,10 +87,40 @@ def format_event_col(gdf, columns):
     return gdf, list(set(columns))
 
 
+def process_winds(gdfs, temporal, features, columns):
+    """Process winds for a list of GeoDataFrames and add to feature and column lists."""
+    if temporal:  
+        templist = []
+        for gdf in gdfs:
+            try:
+                templist.append(get_wind_range(gdf, columns))
+            except Exception as e:
+                print(f"Error for {gdf.region[0]}:\n{e}")
+        gdfs = templist
+        columns = list(set(columns + ['Tm6', 'Tm3', 'T']))
+        features = list(set(features + ['Tm6', 'Tm3', 'T']))
+        
+    else:
+        
+        columns = list(set(columns + ["wind_avg"]))
+        templist = []
+     
+        for gdf in gdfs:
+            try:
+                templist.append(gdf.loc[:, columns])
+            except Exception as e:
+                print(f"Error for {gdf.region[0]}:\n{e}")
+        gdfs = templist
+        features = list(set(features + ['wind_avg']))
+        
+    return gdfs, features, columns
+
+
 def binarise_feature(gdf, old_feature, new_feature, thresh, features, columns):
     print(f"\nBinarising {old_feature} as {new_feature}...\n")
     assert (thresh <= 1) and (thresh >=0), "threshold must be a fraction"
     gdf[new_feature] = gdf[old_feature].apply(lambda x: 1 if x > thresh else 0)
+    gdf[new_feature] = gdf[new_feature].astype('Int64')
     features += [new_feature]
     columns += [new_feature]
     return gdf, list(set(features)), list(set(columns))
@@ -96,67 +133,6 @@ def clean_slope(gdf):
     gdf['slope_pw'] = gdf['slope_pw'].replace(np.nan, 0.0)
     gdf['slope_pw'] = gdf['slope_pw'].apply(lambda x: float(x) if type(x) == str else x)
     return gdf
-
-
-
-
-
-# def format_gdf(filelist, columns, temporal=True, thresh=0):
-#     """Format GeoDataframe from list of files."""
-#     gdfs = [gpd.read_file(filename, SHAPE_RESTORE_SHX='YES') for filename in filelist]
-    
-#     # process winds
-#     if temporal:
-#         gdfs = [get_wind_range(gdf, columns) for gdf in gdfs]
-#     else:
-#         columns = columns + ["wind_avg"]
-#         gdfs = [gdf[columns] for gdf in gdfs]
-#     gdf = pd.concat(gdfs, axis=0)
-    
-#     print("Number of storms:", gdf["storm"].nunique())
-#     print("Number of regions:", gdf["region"].nunique())
-
-#     gdf["event"] = gdf["storm"] + "_" + gdf["region"] + "_" + gdf["subregion"].astype(str)
-#     gdf = gdf.drop(["storm", "region", "subregion"], axis=1).reset_index(drop=True)
-#     for feature in ["storm", "region", "subregion"]:
-#         columns.remove(feature)
-
-#     print("\nBinarising floodfrac...\n")
-#     assert (thresh <= 1) and (thresh >=0), "thresh must be a fraction"
-#     gdf['flood'] = gdf['floodfrac'].apply(lambda x: 1 if x > thresh else 0)
-    
-#     return gdf, columns
-
-
-# def get_data(wd, features, temporal, storm="", folder='feature_stats', thresh=0):
-#     """Function for loading gdfs from feature_stats and cleaning the dataframe.""""
-#     columns = features + ['storm', 'region', 'subregion', "geometry", "floodfrac"]
-
-#     # list of files to use
-#     files = [filename for filename in glob.glob(join(wd, folder, "*.gpkg"))]
-#     filemask = [storm in file for file in files]
-#     files = list(compress(files, filemask))
-
-#     # generate the GeoDataFrame
-#     gdf, columms = format_gdf(files, columns, temporal=temporal, thresh=thresh)
-#     gdf = gdf.replace("", np.nan)
-
-#     # sort out the messy slope field
-#     gdf['slope_pw'] = gdf['slope_pw'].replace(np.inf, 0.0)
-#     gdf['slope_pw'] = gdf['slope_pw'].replace('inf', 0.0)
-#     gdf['slope_pw'] = gdf['slope_pw'].replace(np.nan, 0.0)
-#     gdf['slope_pw'] = gdf['slope_pw'].apply(lambda x: float(x) if type(x) == str else x)
-
-#     features = features + ['Tm6', 'Tm3', 'T'] if temporal else features + ['wind_avg']
-#     gdf = gdf[features + ['event', 'floodfrac', 'geometry']].dropna().reset_index(drop=True)
-    
-#     # one-hot-encode lulc
-#     features_binary, _ = data_utils.split_features_binary_continuous(data_utils.binary_keywords, features)
-#     if 'lulc' in features:
-#         gdf, features, features_binary, _ = one_hot_encode_feature(gdf, 'lulc', features_binary, features)
-    
-#     return gdf, features
-
 
 
 
