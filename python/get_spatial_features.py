@@ -35,7 +35,7 @@ logger.addHandler(fh)
 logger.addHandler(sh)
 
 # settings
-start_on = 0
+start_on = 5
 recalculate = True
 recalculate_neighbours = True
 verbose = True
@@ -50,7 +50,7 @@ def main():
     rows = [(f"{row.event}_{row.region}", row.nsubregions) for row in rows]
     
     for storm, nsubregions in rows:
-        for subregion in range(start_on, int(nsubregions)):
+        for subregion in range(start_on, 6):  #int(nsubregions)):
             event = f"{storm}_{subregion}"     
             logger.info(f"Add spatial features to {event}.")
             try:

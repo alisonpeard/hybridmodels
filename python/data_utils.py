@@ -29,10 +29,10 @@ floodthresh = 0
 pwater_thresh = 98
 binary_keywords = ['lulc', 'aqueduct', 'deltares']
 default_features = ["elevation", "jrc_permwa", "slope_pw", "dist_pw", "precip",
-                    "soilcarbon", "mangrove", "ndvi", "aqueduct", "lulc", "deltares"]
+                    "soilcarbon", "mangrove", "ndvi", "aqueduct", "lulc", "deltares", "soiltemp1", "soiltemp2"]
 all_features = ["elevation", "jrc_permwa", "slope_pw", "dist_pw", "precip",
                 'mslp', 'sp', 'u10_u', 'u10_v', "soilcarbon", "mangrove", "ndvi", "aqueduct",
-                "lulc", "deltares"]
+                "lulc", "deltares", "soiltemp1", "soiltemp2"]
 
 
 """Data acquisition functions."""
@@ -231,3 +231,26 @@ def add_intermediate_features(feature_gdf, events, intermediate_features, wd, th
             del feature_gdf_pm['line_to_pw']
             gdf_tosave = feature_gdf_pm.to_crs(4326)
             gdf_tosave.to_file(join(wd, 'feature_stats_spatial', f'{event}.gpkg'), driver='GPKG')
+            
+            
+def add_features_to_spatial_data(wd, event, gdf, features, recalculate=True):
+    """
+    gdf : GeoPandas.GeoDataFrame
+        Feature GeoDataFrame without spatial features and containing features to be added.
+    features : list
+        Features to be added to spatial data.
+    """
+    if exists(join(wd, 'feature_stats_spatial', f'{event}.gpkg')):
+        gdf_spatial = gpd.read_file(join(wd, 'feature_stats_spatial', f'{event}.gpkg'))
+        assert len(gdf) == len(gdf_spatial), f"len(gdf)={len(gdf)} and len(gdf_spatial)={len(gdf_spatial)} for {event}."
+        for feature in features:
+            if (feature not in [*gdf_spatial.columns]) or recalculate:
+                gdf_spatial[feature] = gdf[feature].replace('', np.nan).astype(float).reset_index(drop=True)
+                print(f"Added {feature} to {event} GeoDataFrame")
+            else:
+                print(f"{feature} already in spatial GeoDataFrame for {event}")
+        gdf_spatial.to_file(join(wd, 'feature_stats_spatial', f'{event}.gpkg'), driver='GPKG')
+                
+    else:
+        print(f"No spatial data for {event}.")
+    
