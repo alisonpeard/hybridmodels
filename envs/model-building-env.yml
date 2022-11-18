@@ -22,7 +22,7 @@ dependencies:
   - tensorflow=2.9.1        # use of keras submodule
   # - pytorch                 # neural networks (better than tf)
 
-# conda env create -f environment2.yml --experimental-solver=libmamba
+# conda env create -f model-building-env.yml --experimental-solver=libmamba
 # conda activate hybridmodels-modelbuild
 # python -m ipykernel install --user --name hybridmodels-modelbuild
 

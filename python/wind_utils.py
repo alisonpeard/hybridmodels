@@ -15,9 +15,6 @@ from tqdm import tqdm
 import numpy as np
 from math import ceil, floor
 from shapely.geometry import Polygon, box
-import rasterio, rasterstats
-from rasterio import plot
-from rasterio.merge import merge
 import matplotlib.pyplot as plt
 
 
@@ -163,6 +160,10 @@ def holland_wind_field(r, wind, pressure, pressure_env, distance, lat):
     distance : float
         distance from point to storm centre (km)
     latitude : float
+
+    Returns:
+    --------
+    Vg : gradient winds at given distance
 
     Notes:
     ------

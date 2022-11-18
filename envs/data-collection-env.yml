@@ -1,4 +1,4 @@
-name: hybridmodels-datacol
+name: hybridmodels
 # If issues with pyg use wheels installation described in pyg docs
 channels:
   - conda-forge
@@ -14,6 +14,9 @@ dependencies:
   # Plotting
   - matplotlib              # plotting
   # Spatial packages
+  - gdal=3.5.3
+  # - pyogrio=0.4.2           # required for dask_geopandas.read_file() (causing problems)
+  - fiona=1.8.22
   - pysal                   # for spatial data analytics [problematic]
   - pyshp                   # reading ESRI shapefiles
   - pyproj>=3.0             # reprojecting pyshp objects
@@ -28,12 +31,10 @@ dependencies:
   - rioxarray>=0.3.0        # extends xarray with rasterio backend
   - scipy                   # scientific computing
   - geopandas
-  - dask-geopandas
   - netCDF4                 # read .nc files
-  - basemap                 # not sure if this works yet, for .nc files too
+  # - basemap                 # not sure if this works yet, for .nc files too (causing problems)
   - geemap                  # super helpful for GEE API
   - richdem
-  - pyogrio                 # required for dask_geopandas.read_file()
   - dask
   - distributed
   # APIs
@@ -47,7 +48,7 @@ dependencies:
   - pytorch                 # neural networks
   # - pyg                     # graph neural networks
 
-# conda env create -f environment.yml --experimental-solver=libmamba python=3.9
+# conda env create -f data-collection-env.yml --experimental-solver=libmamba python=3.9
 # conda activate hybridmodels
 # python -m ipykernel install --user --n hybridmodels
 

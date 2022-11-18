@@ -12,7 +12,7 @@ from shapely.ops import nearest_points
 # for deltares
 import dask.distributed
 import xarray as xr
-import pystac_client
+# import pystac_client  # issue on old Macbook
 
 import ee
 import geemap  # need later
@@ -28,8 +28,7 @@ global pwater_thresh
 
 default_features = ["flood", "elevation", "permwater", "pw_dists", "precipitation",
                     "era5", "soilcarbon","soiltemp", "mangroves", "ndvi", "wind_fields", "aqueduct",
-                    "lulc", "deltares"]
-
+                    "lulc", "deltares", "exclusion_mask"]
 
 class Event:
     """
@@ -97,6 +96,8 @@ class Event:
         self.indir = join(self.wd, f"{storm}_{region}")
         self.startdate, self.enddate = [*pd.read_csv(join(self.wd, "csvs", "event_dates.csv"),
                                    index_col="storm").loc[storm]]
+        self.acquisition_time = pd.read_csv(join(self.wd, 'csvs', 'current_datasets.csv'),
+                                            index_col=['event', 'region']).loc[(self.storm, self.region)]['acquisition_time']
         self.year = int(self.enddate[:4])
 
         self.aoi_pm = [None] * nsubregions
@@ -1024,13 +1025,42 @@ class Event:
             self.save_gdf(subregion)
 
 
-    def add_intermediates_to_event(self, subregion, features_to_process: dict, thresh=pwater_thresh):
-        """Helper function to for add_intermediate_features between cell and nearest water cell."""
+    def get_exclusion_mask(self, subregion, recalculate=False):
+        """Add exclusion mask if exclusion_mask.gpkg present.
+
+        Exclusion mask from Copernicus GFM.
+        """
 
         if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
-        feature_gdf = self.feature_gdf[subregion]
-        feature_gdf = add_intermediate_features(feature_gdf, features_to_process, thresh=thresh)
-        self.feature_gdf[subregion] = feature_gdf
+        if "exclusion_mask" not in self.feature_gdf[subregion] or recalculate:
+            self.logger.info("Calculating exclusion mask...")
+            feature_gdf = self.feature_gdf[subregion]
+
+            try:
+                feature_gdf['exclusion_mask'] = [""] * len(feature_gdf)
+                filepath = join(wd, f"{self.storm}_{self.region}", "exclusion_mask.gpkg")
+                if exists(filepath):
+                    feature_gdf = self.feature_gdf[subregion]
+                    exclusion_mask = gpd.read_file(filepath)
+                    assert feature_gdf.crs == exclusion_mask.crs
+
+                    feature_gdf = data_utils.get_grid_intersects(exclusion_mask, feature_gdf, col='exclusion_mask')
+                    feature_gdf['exclusion_mask'] = feature_gdf['exclusion_mask'].apply(lambda x: 1 if x > 0 else 0)
+                else:
+                    self.logger.warning(f"No exclusion mask file with name {filepath}.")
+            except Exception as e:
+                self.logger.warning(f"Error for exclusion mask for {self.storm}, {self.region}, {subregion}:"\
+                                    f"{e}\nCreating empty fields.")
+                feature_gdf["exclusion_mask"] = [""] * len(feature_gdf)
+
+            self.feature_gdf[subregion] = feature_gdf
+            self.save_gdf(subregion)
 
 
-# Helper functions to add auxilliary spatial features from data
+    # def add_intermediates_to_event(self, subregion, features_to_process: dict, thresh=pwater_thresh):
+    #     """Helper function to for add_intermediate_features between cell and nearest water cell."""
+    #
+    #     if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
+    #     feature_gdf = self.feature_gdf[subregion]
+    #     feature_gdf = add_intermediate_features(feature_gdf, features_to_process, thresh=thresh)
+    #     self.feature_gdf[subregion] = feature_gdf

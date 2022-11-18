@@ -30,10 +30,10 @@ Use:
 """
 
 # settings
-TEST_RUN = False             # set TRUE to check logging and multiprocessing behaving correctly
+TEST_RUN = True             # set TRUE to check logging and multiprocessing behaving correctly
 feature_list = None  # None for all features or else ['feature1', 'feature2']
 recalculate_all = False      # false to just append to files
-recalculate_features = False
+recalculate_features = True
 
 # imports
 from os.path import join, dirname

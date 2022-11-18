@@ -15,9 +15,6 @@ import pandas as pd
 import geopandas as gpd
 import rtree
 from shapely.geometry import Polygon, box
-import rasterio, rasterstats
-from rasterio import plot
-from rasterio.merge import merge
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from shapely.geometry import Point, LineString
@@ -28,11 +25,13 @@ from wind_utils import *
 floodthresh = 0
 pwater_thresh = 98
 binary_keywords = ['lulc', 'aqueduct', 'deltares']
-default_features = ["elevation", "jrc_permwa", "slope_pw", "dist_pw", "precip",
-                    "soilcarbon", "mangrove", "ndvi", "aqueduct", "lulc", "deltares", "soiltemp1", "soiltemp2"]
+default_features = ["elevation", "jrc_permwa", "slope_pw", "dist_pw",
+                    "precip", "soilcarbon", "mangrove", "ndvi", "aqueduct",
+                    "lulc", "deltares", "soiltemp1", "soiltemp2"]
 all_features = ["elevation", "jrc_permwa", "slope_pw", "dist_pw", "precip",
-                'mslp', 'sp', 'u10_u', 'u10_v', "soilcarbon", "mangrove", "ndvi", "aqueduct",
-                "lulc", "deltares", "soiltemp1", "soiltemp2"]
+                'mslp', 'sp', 'u10_u', 'u10_v', "soilcarbon", "mangrove",
+                "ndvi", "aqueduct", "lulc", "deltares", "soiltemp1", "soiltemp2",
+                "exclusion_mask"]
 
 
 """Data acquisition functions."""
@@ -70,7 +69,7 @@ def make_grid(xmin, ymin, xmax, ymax, length=1000, wide=1000):
 
 
 
-def get_grid_intersects(gdf, grid, floodcol='floodfrac'):
+def get_grid_intersects(gdf, grid, col='floodfrac'):
     """
     Function for calculating the fraction of polygon in each gridcell.
 
@@ -101,7 +100,7 @@ def get_grid_intersects(gdf, grid, floodcol='floodfrac'):
             total += frac
             assert total <= 1  # sanity check
         overlap_list.append(total)
-    grid.loc[:, floodcol] = overlap_list
+    grid.loc[:, col] = overlap_list
 
     return grid
 
@@ -178,7 +177,7 @@ def add_spatial_features(gdf, events, features, wd, recalculate_neighbours=False
                 for feature in features_binary:
                     presence = process_binary_neighbours(gdf, feature, neighbours)
                     features_surrounding[feature].append(presence)
-            
+
             # append to new dataframe
             gdf_tosave = pd.DataFrame.from_dict(features_surrounding, orient='columns')
             gdf_tosave.set_index(ids, drop=True, inplace=True)
@@ -188,7 +187,7 @@ def add_spatial_features(gdf, events, features, wd, recalculate_neighbours=False
 
 def add_intermediate_features(feature_gdf, events, intermediate_features, wd, thresh=pwater_thresh, recalculate=False, verbose=True):
     """Calculate averages along grid cells connecting dry and wet cell.
-    
+
     This is only approximate as it is applied to the gridded dataframe rather than the
     original data.
     """
@@ -231,8 +230,8 @@ def add_intermediate_features(feature_gdf, events, intermediate_features, wd, th
             del feature_gdf_pm['line_to_pw']
             gdf_tosave = feature_gdf_pm.to_crs(4326)
             gdf_tosave.to_file(join(wd, 'feature_stats_spatial', f'{event}.gpkg'), driver='GPKG')
-            
-            
+
+
 def add_features_to_spatial_data(wd, event, gdf, features, recalculate=True):
     """
     gdf : GeoPandas.GeoDataFrame
@@ -250,7 +249,6 @@ def add_features_to_spatial_data(wd, event, gdf, features, recalculate=True):
             else:
                 print(f"{feature} already in spatial GeoDataFrame for {event}")
         gdf_spatial.to_file(join(wd, 'feature_stats_spatial', f'{event}.gpkg'), driver='GPKG')
-                
+
     else:
         print(f"No spatial data for {event}.")
-    

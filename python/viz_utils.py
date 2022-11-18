@@ -96,7 +96,7 @@ def make_cmap(levels=np.arange(20, 65, 5), cmap='YlOrRd', under='lightgrey', ove
     """
     Returns:
     -------
-    cmap : 
+    cmap :
         Colourmap with defined levels
     src_norm:
         Norm to use when plotting with rasterio
