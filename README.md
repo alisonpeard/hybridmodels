@@ -5,7 +5,7 @@ Work in progress, developing code to:
 3. Train machine learning models to predict flood maps from the data
 
 ## Contents
-* Python script `get_data_parallel.py` with code to generate dataset. Requirements:
+* Python script `get_data_parallel.py` with code to generate dataset. <br> Requirements:
   1. CSV `current_datasets.csv` and `event_dates.csv`: csvs containing storm name, region name, number of subregions (32x32 grid squares) for each region, storm start date, end date, landfall date (from IBTrACs data), satellite acquisition date of the flood map, and a geojson string of the subregion polygons. These should be in `./hybridmodels/data/csv` directory.
   2. a folder with name following the format `<storm name>_<region>` and containing a flood polygon (`flood.gpkg`) and area of interest (`areaOfInterest.gpkg`) polygon in GeoPackage format. These should be in `./hybridmodels/data/<storm name>_<region>` directory.
   3. The hybridmodels conda environment (create from `hybridmodels.yml` contained in envs folder).
