@@ -16,6 +16,7 @@ import numpy as np
 from math import ceil, floor
 from shapely.geometry import Polygon, box
 import matplotlib.pyplot as plt
+from datetime import datetime, timedelta
 
 
 # {agency: [scale, shift]}
@@ -191,7 +192,7 @@ def holland_wind_field(r, wind, pressure, pressure_env, distance, lat):
     return Vg
 
 
-def get_wind_field(ibtracs_gdf, feature_gdf, units_df, wind_col, pressure_col, rmw_col):
+def get_wind_field(ibtracs_gdf, feature_gdf, units_df, wind_col, pressure_col, rmw_col, acquisition_time):
     """
     Calculate wind fields from IBTrACS data for a grid GeoDataFrame.
     """
@@ -210,46 +211,53 @@ def get_wind_field(ibtracs_gdf, feature_gdf, units_df, wind_col, pressure_col, r
     assert len(ibtracs_gdf) == h_distances.shape[1],\
         "Number of haversine distances calculates did not match number of centroids"
 
+    # define interval of [-5, 0] days before acquisition time to get wind for
+    acquisition_dt = datetime.strptime(acquisition_time, '%Y-%m-%d %H:%M')
+    start_dt = start = acquisition_dt - timedelta(5)
+
     # calculate wind field for each time stamp
     timestamps = []
     for time in range(len(ibtracs_gdf)):
 
-        # inputs for holland function
-        h_dists = [x[time] for x in h_distances]
-        basin = ibtracs_gdf["BASIN"][time]
-        pressure_env = BASIN_ENV_PRESSURE[basin]
-        pressure = float(ibtracs_gdf[pressure_col][time])
-        lat = float(ibtracs_gdf["LAT"][time])
+        # only process winds up to five days before acquisition date
+        iso_time = ibtracs_gdf['ISO_TIME'][time]
+        iso_dt = datetime.strptime(iso_time, '%Y-%m-%d %H:%M:%S')
+        if start_dt < iso_dt < acquisition_dt:
+            # inputs for holland function
+            h_dists = [x[time] for x in h_distances]
+            basin = ibtracs_gdf["BASIN"][time]
+            pressure_env = BASIN_ENV_PRESSURE[basin]
+            pressure = float(ibtracs_gdf[pressure_col][time])
+            lat = float(ibtracs_gdf["LAT"][time])
 
-        if abs(pressure_env - pressure) > 0:
-            # radius of maximum winds in km
-            if units_df[rmw_col][0] == "nmile":
-                r = nmile_to_km(float(ibtracs_gdf[rmw_col][time]))
+            if abs(pressure_env - pressure) > 0:
+                # radius of maximum winds in km
+                if units_df[rmw_col][0] == "nmile":
+                    r = nmile_to_km(float(ibtracs_gdf[rmw_col][time]))
+                else:
+                    r = float(ibtracs_gdf[rmw_col][time])
+
+                # maximum wind speed in mps
+                if units_df[wind_col][0] == "kts":
+                    wind = knots_to_mps(float(ibtracs_gdf[wind_col][time]))
+                else:
+                    wind = ibtracs_gdf[wind_col][time]
+
+                # calculate wind field
+                wind_field = []
+                for distance in h_dists:
+                    wind_speed = holland_wind_field(r, wind, pressure, pressure_env, distance, lat)
+                    wind_field.append(wind_speed)
+
+                # reformat time string
+                date, time = iso_time.split(" ")
+                date = date[5:]
+                time = time[:2]
+
+                # if non-neglible wind, append to dataframe
+                if sum(wind_field) > 0:
+                    feature_gdf[f"wnd{date}_{time}"] = wind_field
             else:
-                r = float(ibtracs_gdf[rmw_col][time])
-
-            # maximum wind speed in mps
-            if units_df[wind_col][0] == "kts":
-                wind = knots_to_mps(float(ibtracs_gdf[wind_col][time]))
-            else:
-                wind = ibtracs_gdf[wind_col][time]
-
-            # calculate wind field
-            wind_field = []
-            for distance in h_dists:
-                wind_speed = holland_wind_field(r, wind, pressure, pressure_env, distance, lat)
-                wind_field.append(wind_speed)
-
-            # reformat time string
-            iso_time = ibtracs_gdf['ISO_TIME'][time]
-            date, time = iso_time.split(" ")
-            date = date[5:]
-            time = time[:2]
-
-            # if non-neglible wind, append to dataframe
-            if sum(wind_field) > 0:
-                feature_gdf[f"wnd{date}_{time}"] = wind_field
-        else:
-            logging.warning(f"No pressure drop for time {time}, skipping wind speed calculation.")
+                logging.warning(f"No pressure drop for time {time}, skipping wind speed calculation.")
 
     return feature_gdf

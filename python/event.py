@@ -12,7 +12,9 @@ from shapely.ops import nearest_points
 # for deltares
 import dask.distributed
 import xarray as xr
-# import pystac_client  # issue on old Macbook
+import pystac_client  # issue on old Macbook
+import rasterio
+import rioxarray
 
 import ee
 import geemap  # need later
@@ -22,9 +24,6 @@ from model_utils import *
 
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
-
-global default_features
-global pwater_thresh
 
 default_features = ["flood", "elevation", "permwater", "pw_dists", "precipitation",
                     "era5", "soilcarbon","soiltemp", "mangroves", "ndvi", "wind_fields", "aqueduct",
@@ -486,7 +485,7 @@ class Event:
                 values = [i['properties']['val'] for i in feature_list]
                 flood_gdf = gpd.GeoDataFrame({'geometry':geom}).set_crs(4326)
 
-                feature_gdf = get_grid_intersects(flood_gdf, feature_gdf, floodcol='deltares')
+                feature_gdf = get_grid_intersects(flood_gdf, feature_gdf, col='deltares')
 
             except Exception as e:
                 self.logger.error(f"Error for Deltares data for {self.storm}, {self.region}, {subregion}:"\
@@ -743,7 +742,10 @@ class Event:
 
 
     def get_era5(self, subregion, recalculate=False):
-        """ERA5 Daily MSLP, surface pressure and (x, y) U10 wind components."""
+        """ERA5 Daily MSLP, surface pressure and (x, y) U10 wind components.
+
+        Dataset available: 1979-01-02T00:00:00Z – 2020-07-09T00:00:00
+        """
 
         if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
 
@@ -799,7 +801,10 @@ class Event:
 
 
     def get_soiltemp(self, subregion, recalculate=False):
-        """ERA5 Land Monthly Averaged ECMWF Climate Reanalysis."""
+        """ERA5 Land Monthly Averaged ECMWF Climate Reanalysis.
+
+        Dataset availability: 1981-01-01T00:00:00Z – 2022-08-01T00:00:00
+        """
 
         if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
 
@@ -821,14 +826,12 @@ class Event:
                     # include one month in advance to make sure covered
                     start = ee.Date(self.startdate).advance(-1, 'month')
                     end = ee.Date(self.enddate)
-
                     feat = ee.Image(ee.ImageCollection("ECMWF/ERA5_LAND/MONTHLY")
                                       .select(feature)
                                       .filterBounds(aoi_ee)
                                       .filterDate(start, end)
                                       .sort('system:time_start', False).first()
                                       .clip(aoi_ee))
-
 
                     # unmask using the spatial average
                     spatial_mean = feat.reduceRegions(aoi_ee,
@@ -843,11 +846,11 @@ class Event:
                                                    reducer=ee.Reducer.mean(),
                                                    scale=self.gridsize,
                                                    crs="EPSG:4326")
-
                     feat_list = mean_feat.aggregate_array('mean').getInfo()
                     feature_gdf[feature_name] = feat_list
 
                 except Exception as e:
+                    import pdb; pdb.set_trace()
                     self.logger.warning(f"Error for {feature_name} for {self.storm}, {self.region}, {subregion}:"\
                                         f"{e}\nCreating empty field.")
                     feature_gdf[feature_name] = [""] * len(feature_gdf)
@@ -1009,7 +1012,7 @@ class Event:
 
                 # process IBTrACS data
                 ibtracs_gdf, wind_col, pressure_col, rmw_col = process_ibtracs(ibtracs_gdf, self.storm)
-                feature_gdf = get_wind_field(ibtracs_gdf, feature_gdf, units_df, wind_col, pressure_col, rmw_col)
+                feature_gdf = get_wind_field(ibtracs_gdf, feature_gdf, units_df, wind_col, pressure_col, rmw_col, self.acquisition_time)
 
                 # save average wind field
                 timemask = ["wnd" in col for col in feature_gdf.columns]
@@ -1017,7 +1020,7 @@ class Event:
                 feature_gdf["wind_avg"] = feature_gdf[timestamps].mean(axis=1)
 
             except Exception as e:
-                self.logger.warning(f"Error for ndvi for {self.storm}, {self.region}, {subregion}:"\
+                self.logger.warning(f"Error for wind fields for {self.storm}, {self.region}, {subregion}:"\
                                     f"{e}\nCreating empty field.")
                 feature_gdf["wind_avg"] = [""] * len(feature_gdf)
 
@@ -1026,7 +1029,7 @@ class Event:
 
 
     def get_exclusion_mask(self, subregion, recalculate=False):
-        """Add exclusion mask if exclusion_mask.gpkg present.
+        """Add exclusion mask if exclusion_mask.gpkg present in event directory.
 
         Exclusion mask from Copernicus GFM.
         """
@@ -1038,7 +1041,7 @@ class Event:
 
             try:
                 feature_gdf['exclusion_mask'] = [""] * len(feature_gdf)
-                filepath = join(wd, f"{self.storm}_{self.region}", "exclusion_mask.gpkg")
+                filepath = join(self.wd, f"{self.storm}_{self.region}", "exclusion_mask.gpkg")
                 if exists(filepath):
                     feature_gdf = self.feature_gdf[subregion]
                     exclusion_mask = gpd.read_file(filepath)
@@ -1048,6 +1051,7 @@ class Event:
                     feature_gdf['exclusion_mask'] = feature_gdf['exclusion_mask'].apply(lambda x: 1 if x > 0 else 0)
                 else:
                     self.logger.warning(f"No exclusion mask file with name {filepath}.")
+                    feature_gdf["exclusion_mask"] = [""] * len(feature_gdf)
             except Exception as e:
                 self.logger.warning(f"Error for exclusion mask for {self.storm}, {self.region}, {subregion}:"\
                                     f"{e}\nCreating empty fields.")

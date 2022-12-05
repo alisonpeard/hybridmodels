@@ -30,9 +30,9 @@ Use:
 """
 
 # settings
-TEST_RUN = True             # set TRUE to check logging and multiprocessing behaving correctly
-feature_list = None  # None for all features or else ['feature1', 'feature2']
-recalculate_all = False      # false to just append to files
+TEST_RUN = False             # check logging and multiprocessing behaving correctly (currently failing)
+feature_list = None  # ['deltares']          # None for all features or else ['feature1', 'feature2']
+recalculate_all = True      # false to just append to files
 recalculate_features = True
 
 # imports
@@ -64,6 +64,7 @@ def process_events(row, queue, configurer):
     f = logging.Formatter('%(asctime)s %(name)s %(levelname)-8s: %(message)s')
     fh.setFormatter(f)
     sh = logging.StreamHandler()
+    sh.setLevel(logging.WARNING)
     sh.setFormatter(f)
     logger.addHandler(fh)
     logger.addHandler(sh)

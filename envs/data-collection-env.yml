@@ -32,25 +32,34 @@ dependencies:
   - scipy                   # scientific computing
   - geopandas
   - netCDF4                 # read .nc files
-  # - basemap                 # not sure if this works yet, for .nc files too (causing problems)
+  # - basemap               # not sure if this works yet, for .nc files too (causing problems)
   - geemap                  # super helpful for GEE API
+  - ipyleaflet=0.12.3
+  - ipywidgets
   - richdem
   - dask
   - distributed
   # APIs
   - earthengine-api         # access Google Earth Engine
   - sentinelhub             # access SentinelHub
+  - pystac-client
   # Jupyter Environment
   - ipykernel               # attach environment to Jupyter notebook functionality
   - notebook                # Jupyter notebook
   # Machine learning
-  - tensorflow              # keras submodule
-  - pytorch                 # neural networks
+  # - tensorflow              # keras submodule
+  # - pytorch                 # neural networks
   # - pyg                     # graph neural networks
 
+
+## NOTE:
 # conda env create -f data-collection-env.yml --experimental-solver=libmamba python=3.9
 # conda activate hybridmodels
 # python -m ipykernel install --user --n hybridmodels
+# python -m pip install zarr
 
 # conda env remove -n hybridmodels
 # conda info --envs
+
+# geemap causing issues, install with pip after?
+# python -m pip install -U geemap

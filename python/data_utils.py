@@ -23,7 +23,7 @@ from wind_utils import *
 
 """Global settings."""
 floodthresh = 0
-pwater_thresh = 98
+pwater_thresh = 90
 binary_keywords = ['lulc', 'aqueduct', 'deltares']
 default_features = ["elevation", "jrc_permwa", "slope_pw", "dist_pw",
                     "precip", "soilcarbon", "mangrove", "ndvi", "aqueduct",

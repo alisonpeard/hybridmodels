@@ -1,0 +1,34 @@
+name: worldfloods
+# If issues with pyg use wheels installation described in pyg docs
+channels:
+  - conda-forge
+  - pyg
+  - defaults
+dependencies:
+  - python
+  - pip
+  # Core scientific python
+  - numpy=1.21              # compatibility with numba and pysal
+  - pyqt
+  - tqdm                    # progress bars
+  # Plotting
+  - matplotlib              # plotting
+  # Spatial packages
+  - geopandas
+  - geemap                  # super helpful for GEE API
+  - ipyleaflet=0.12.3
+  # Jupyter Environment
+  - ipykernel               # attach environment to Jupyter notebook functionality
+  - notebook                # Jupyter notebook       # graph neural networks
+
+
+## NOTE:
+# conda env create -f worldfloods.yml --experimental-solver=libmamba python=3.9
+# conda activate worldfloods
+# python -m ipykernel install --user --n worldfloods
+
+# conda env remove -n worldfloods
+# conda info --envs
+
+# geemap causing issues, install with pip after?
+# python -m pip install git+https://github.com/spaceml-org/ml4floods#egg=ml4floods

@@ -1,0 +1,46 @@
+name: hybridmodels-mfe
+# If issues with pyg use wheels installation described in pyg docs
+channels:
+  - conda-forge
+  - pyg
+  - defaults
+dependencies:
+  - python=3.9
+  - pip
+  # Core scientific python
+  # - numpy                   # compatibility with numba and pysal
+  # - pyqt
+  # - tqdm                    # progress bars
+  # # Plotting
+  # - matplotlib              # plotting
+  # # Spatial packages
+  # - pandas
+  # - geopandas
+  # - scipy
+  # - pysal
+  # - scipy
+  # - networkx
+  # - shapely
+  # - rtree
+  - geemap
+  - ipyleaflet=0.12.3
+  # - dask
+  # - xarray
+  # # APIs
+  # - earthengine-api         # access Google Earth Engine
+  # - sentinelhub             # access SentinelHub
+  # - pystac-client
+  # # Notebook
+  # - ipykernel               # attach environment to Jupyter notebook functionality
+  # - notebook                # Jupyter notebook
+
+## NOTE:
+# conda env create -f data-collection-2.yml --experimental-solver=libmamba python=3.9
+# conda activate hybridmodels
+# python -m ipykernel install --user --n hybridmodels
+
+# conda env remove -n hybridmodels-mfe
+# conda info --envs
+
+# geemap causing issues, install with pip after?
+# python -m pip install -U geemap
