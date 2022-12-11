@@ -27,7 +27,7 @@ pwater_thresh = 90
 binary_keywords = ['lulc', 'aqueduct', 'deltares']
 default_features = ["elevation", "jrc_permwa", "slope_pw", "dist_pw",
                     "precip", "soilcarbon", "mangrove", "ndvi", "aqueduct",
-                    "lulc", "deltares", "soiltemp1", "soiltemp2"]
+                    "lulc", "deltares", "soiltemp1", "soiltemp2", "exclusion_mask"]
 all_features = ["elevation", "jrc_permwa", "slope_pw", "dist_pw", "precip",
                 'mslp', 'sp', 'u10_u', 'u10_v', "soilcarbon", "mangrove",
                 "ndvi", "aqueduct", "lulc", "deltares", "soiltemp1", "soiltemp2",
@@ -93,20 +93,24 @@ def get_grid_intersects(gdf, grid, col='floodfrac'):
     """
     gdf = gdf.unary_union
     overlap_list = []
+
     for grd in tqdm(grid.geometry):
         total = 0
         if gdf.intersects(grd):
-            frac = (gdf.intersection(grd)).area / grd.area
+            intersection = (gdf.intersection(grd)).area
+            frac = intersection / grd.area
             total += frac
             assert total <= 1  # sanity check
         overlap_list.append(total)
+
+
     grid.loc[:, col] = overlap_list
 
     return grid
 
 
 """Functions for adding spatial features."""
-spatial_features = ['dist_pw', 'lulc__90', 'deltares', 'lulc__20', 'aqueduct', 'lulc__80', 'lulc__30', 'soilcarbon', 'slope_pw',
+spatial_features = ['lulc__90', 'deltares', 'lulc__20', 'aqueduct', 'lulc__80', 'lulc__30', 'soilcarbon', 'slope_pw',
                     'precip', 'jrc_permwa', 'mangrove', 'lulc__40', 'ndvi', 'lulc__60', 'lulc__10', 'lulc__50', 'elevation',
                     'lulc__95']
 intermediate_features = {'soilcarbon': np.mean, 'mangrove': np.mean, 'ndvi': np.mean, 'elevation': max}

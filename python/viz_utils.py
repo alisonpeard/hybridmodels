@@ -35,7 +35,10 @@ labels = {"floodfrac": "flooded fraction",
           "built_up": "built-up areas (LULC)",
           "bare_soil": "bare soil (LULC)",
           "water": "water (LULC)",
-          "mangrove": "mangrove presence (Giri 2011)"
+          "mangrove": "mangrove presence (Giri 2011)",
+          "exclusion_mask": "exclusion mask",
+          "soiltemp1": "soil temperature (0-7cm)",
+          "soiltemp2": "soil temperature (7-28cm)" 
 }
 
 

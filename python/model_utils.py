@@ -28,7 +28,7 @@ def load_raw_data(wd, features, temporal=False, binary=True, subset=''):
     columns = features + ['storm', 'region', 'subregion', "geometry", "floodfrac"]
     gdfs = load_all_gdfs(wd, subset=subset)
     gdfs, features, columns = process_winds(gdfs, temporal, features, columns)
-    
+
     # one big GeoDataFrame
     gdf = pd.concat(gdfs)
     gdf.attrs['transforms'] = {}
@@ -36,12 +36,12 @@ def load_raw_data(wd, features, temporal=False, binary=True, subset=''):
     if binary:
         gdf, features, columns = binarise_feature(gdf, 'floodfrac', 'floodfrac', data_utils.floodthresh, features, columns)
         gdf.attrs['transforms']['floodfrac'] = 'binarised flood fraction'
-    
+
     gdf = gdf.replace("", np.nan)
     gdf = clean_slope(gdf)
     gdf.attrs['transforms']['slope'] = 'tidied-up slope'
     features_binary, _ = data_utils.split_features_binary_continuous(data_utils.binary_keywords, features)
-        
+
     if 'lulc' in features:
         gdf, features, _, columns, _ = one_hot_encode_feature(gdf, 'lulc', features_binary, features, columns)
         for lulc_col in lulc_cols:
@@ -49,7 +49,7 @@ def load_raw_data(wd, features, temporal=False, binary=True, subset=''):
                 gdf[lulc_col] = [''] * len(gdf)
                 features.append(lulc_col)
                 columns.append(lulc_col)
-   
+
     assert not gdf.isna().any().any(), f"{gdf.isna().any()[gdf.isna().any()].index[0]} has NaNs for {gdf.event[0]}."
 
     gdf = gdf[columns].dropna().reset_index(drop=True)
@@ -65,16 +65,16 @@ def load_spatial_data(wd, subset=''):
 
 def load_all_gdfs(wd, folder='feature_stats', subset=''):
     """Return all gdfs in a folder (and filter by subset string)."""
-    
+
     files = [filename for filename in glob.glob(join(wd, folder, "*.gpkg"))]
-    
+
     # make sure subset strings in files
     if not subset=='':
         subset = [f'{file}.gpkg' for file in [subset]]
         filemask = [basename(file) in subset for file in files]
-        files = list(compress(files, filemask)) 
+        files = list(compress(files, filemask))
     gdfs = [gpd.read_file(filename, SHAPE_RESTORE_SHX='YES') for filename in files]
-    
+
     return gdfs
 
 
@@ -89,7 +89,7 @@ def format_event_col(gdf, columns):
 
 def process_winds(gdfs, temporal, features, columns):
     """Process winds for a list of GeoDataFrames and add to feature and column lists."""
-    if temporal:  
+    if temporal:
         templist = []
         for gdf in gdfs:
             try:
@@ -99,12 +99,12 @@ def process_winds(gdfs, temporal, features, columns):
         gdfs = templist
         columns = list(set(columns + ['Tm6', 'Tm3', 'T']))
         features = list(set(features + ['Tm6', 'Tm3', 'T']))
-        
+
     else:
-        
+
         columns = list(set(columns + ["wind_avg"]))
         templist = []
-     
+
         for gdf in gdfs:
             try:
                 templist.append(gdf.loc[:, columns])
@@ -112,7 +112,7 @@ def process_winds(gdfs, temporal, features, columns):
                 print(f"Error for {gdf.region[0]}:\n{e}")
         gdfs = templist
         features = list(set(features + ['wind_avg']))
-        
+
     return gdfs, features, columns
 
 
@@ -201,7 +201,7 @@ def get_wind_range(gdf, columns):
     for col in new_cols:
         if col not in gdf.columns:
             warnings.warn(f"{col.capitalize()} not in DataFrame for {storm.capitalize()}, {region.capitalize()}, {subregion}. "\
-                          
+
                           f"It's been replaced with all zeros. "\
                           f"Note this and check it's correct.\n\n")
             gdf[col] = [0.0] * len(gdf)
@@ -272,56 +272,56 @@ def plot_prediction(test_labels, y_pred, title):
     plt.xlabel("Prediction Error")
     _ = plt.ylabel("Count")
 
-    
-    
+
+
 ## FORMATTING DATA
 def cut_feature(gdf: gpd.GeoDataFrame, feature: str, cutoff=0.001):
     """Cuts outliers past cutoff quintile from dataframe
-    
+
     >>> gdf = cut_feature(gdf, 'elevation')
     >>> print(gdf.attrs['transforms']['elevation']
     """
     gdf = gdf.copy(deep=True)
-    
+
     if 'transforms' not in gdf.attrs:
         gdf.attrs['transforms'] = {}
-        
+
     if feature not in gdf.attrs['transforms']:
         gdf.attrs['transforms'][feature] = []
-    
+
     if f"{cutoff}_cutoff" not in gdf.attrs['transforms'][feature]:
         mincut = gdf[feature].quantile(cutoff)
         maxcut = gdf[feature].quantile(1 - cutoff)
-        
+
         gdf = gdf[(gdf[feature] > mincut) & (gdf[feature] < maxcut)]
         gdf.attrs['transforms'][feature].append(f"{cutoff}_cutoff")
         return gdf
-    
+
     else:
         print(f'The {feature} has already had outliers cut.')
         return None
-    
-    
+
+
 def log_feature(gdf: gpd.GeoDataFrame, feature: str, shift=None):
     """Return dataframe with log taken of selected feature.
-    
+
     >>> gdf = log_feature(gdf, 'elevation')
     >>> gdf.attrs['transforms']
     """
     gdf = gdf.copy(deep=True)
-    
+
     if "transforms" not in gdf.attrs:
         gdf.attrs['transforms'] = {}
 
     if feature not in gdf.attrs['transforms']:
         gdf.attrs['transforms'][feature] = []
-        
+
     if "log" not in gdf.attrs['transforms'][feature]:
         if shift is None:
             shift = gdf[feature].min()
             shift = abs(shift) + 0.01 if shift <= 0 else 0
             print(f"shift: {shift}")
-            
+
         gdf[feature] = gdf[feature].apply(lambda x: np.log(x + shift))
         gdf.attrs['transforms'][feature].append("log")
         gdf.attrs['transforms'][feature].append(f"log_shift: {shift}")
@@ -334,18 +334,18 @@ def log_feature(gdf: gpd.GeoDataFrame, feature: str, shift=None):
 
 def normalise_feature(gdf: gpd.GeoDataFrame, feature: str):
     """Return dataframe with norm taken of selected feature.
-    
+
     >>> gdf = log_feature(gdf, 'elevation')
     >>> print(gdf.attrs['transforms']['elevation']
     """
     gdf = gdf.copy(deep=True)
-    
+
     if "transforms" not in gdf.attrs:
         gdf.attrs['transforms'] = {}
 
     if feature not in gdf.attrs['transforms']:
         gdf.attrs['transforms'][feature] = []
-        
+
     if "normalise" not in gdf.attrs['transforms'][feature]:
         gdf[feature] = (gdf[feature] - gdf[feature].mean()) / gdf[feature].std()
         gdf.attrs['transforms'][feature].append("normalise")
@@ -353,8 +353,8 @@ def normalise_feature(gdf: gpd.GeoDataFrame, feature: str):
     else:
         print(f"The {feature} is already normalised.")
         return None
-    
-    
+
+
 def one_hot_encode_feature(gdf, feature, features_binary, features, columns, notes=[]):
     """One-hot encode a binary features, update binary features lists."""
     if "transforms" not in gdf.attrs:
@@ -362,7 +362,7 @@ def one_hot_encode_feature(gdf, feature, features_binary, features, columns, not
 
     if feature not in gdf.attrs['transforms']:
         gdf.attrs['transforms'][feature] = []
-        
+
     onehot = pd.get_dummies(gdf[feature], prefix=f'{feature}_')
     cols = [*onehot.columns]
     gdf[cols] = onehot
@@ -376,4 +376,3 @@ def one_hot_encode_feature(gdf, feature, features_binary, features, columns, not
     notes.append(f'One-hot encoded {feature}.')
     gdf.attrs['transforms'][feature].append("one-hot encoded")
     return gdf, list(set(features)), list(set(features_binary)), list(set(columns)), notes
-

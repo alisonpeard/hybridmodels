@@ -14,7 +14,7 @@ import data_utils
 # Shapely deprecation warning
 import warnings
 from shapely.errors import ShapelyDeprecationWarning
-warnings.filterwarnings("ignore", category=ShapelyDeprecationWarning) 
+warnings.filterwarnings("ignore", category=ShapelyDeprecationWarning)
 
 # environment
 bd = dirname(__file__)
@@ -35,7 +35,7 @@ logger.addHandler(fh)
 logger.addHandler(sh)
 
 # settings
-start_on = 5
+start_on = 0  # sometimes don't want to do all subregions
 recalculate = True
 recalculate_neighbours = True
 verbose = True
@@ -48,10 +48,10 @@ def main():
     df = df[df.to_process == "yes"]  # only process selected events
     rows = [row for _, row in df.iterrows()]
     rows = [(f"{row.event}_{row.region}", row.nsubregions) for row in rows]
-    
+
     for storm, nsubregions in rows:
         for subregion in range(start_on, 6):  #int(nsubregions)):
-            event = f"{storm}_{subregion}"     
+            event = f"{storm}_{subregion}"
             logger.info(f"Add spatial features to {event}.")
             try:
                 gdf, features, columns = model_utils.load_raw_data(wd, data_utils.default_features, temporal, binary, subset=event)

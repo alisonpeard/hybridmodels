@@ -7,12 +7,12 @@ Use:
 """
 
 # settings
-storm = "gombe"
-region = "mossuril"
-subregion = 0
-nsubregions = 6
-feature_list = ['wind_fields']     # None for all features or else ['feature1', 'feature2']
-recalculate_all = True       # false to just append to files
+storm = "fani"
+region = "eastindia_0"
+subregion = 7
+nsubregions = 12
+feature_list = ['soilcarbon']     # None for all features or else ['feature1', 'feature2']
+recalculate_all = False       # false to just append to files
 recalculate_features = True
 
 # imports
@@ -24,6 +24,9 @@ import traceback
 import pandas as pd
 from event import Event
 from multiprocessing_logging import listener_configurer, worker_configurer, listener_process
+
+# import warnings
+# warnings.simplefilter('error', RuntimeWarning)
 
 # environment
 global bd, wd, log_file_path, log_name
@@ -55,7 +58,6 @@ def main(storm, region, subregion, nsubregions):
                 getattr(event, f"get_{feature}")(subregion, recalculate_features)
         else:
             event.get_all_features(subregion, recalculate_all, recalculate_features, feature_list)
-
     except Exception:
         logger.error(traceback.format_exc())
 

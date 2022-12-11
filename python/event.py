@@ -22,6 +22,10 @@ import geemap  # need later
 from data_utils import *
 from model_utils import *
 
+# Connection rest by peer error
+import httplib2shim
+httplib2shim.patch()
+
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
@@ -253,6 +257,7 @@ class Event:
                     f"Flood file and subregion geometries have different crs {subregion} for {self.region.upper()}."
 
             flood = gpd.overlay(flood, aoi_lonlat, how="intersection")
+
             assert len(flood) > 0,\
                     f"Flood file does not intersect subregion {subregion} for {self.region.upper()}."
 
@@ -422,11 +427,19 @@ class Event:
                         self.logger.error(f"{self.storm}, {self.region}, {subregion}:\n{e}")
                         # feature_gdf[f"aqueduct_{rp}"] = [""] * len(feature_gdf)
 
+                allzero = True
+                for rp in rps:
+                    if feature_gdf[f"aqueduct_{rp}"].sum() > 0:
+                        allzero = False
+
                 # choose rp most correlated to floodfrac
-                best_rp = max(corrs, key=corrs.get)
-                feature_gdf['aqueduct'] = feature_gdf[f"aqueduct_{best_rp}"]
-                self.logger.info(f"Chose return period {best_rp} for {self.storm}, {self.region}, {subregion}\n"
-                                 f"with correlation {max(corrs.values()):.4f}")
+                if not allzero:
+                    best_rp = max(corrs, key=corrs.get)
+                    feature_gdf['aqueduct'] = feature_gdf[f"aqueduct_{best_rp}"]
+                    self.logger.info(f"Chose return period {best_rp} for {self.storm}, {self.region}, {subregion}\n"
+                                     f"with correlation {max(corrs.values()):.4f}")
+                else:
+                    feature_gdf['aqueduct'] = [0] * len(feature_gdf)
 
             except Exception as e:
                 self.logger.error(f"Error for Aqueduct data for {self.storm}, {self.region}, {subregion}"\
@@ -850,7 +863,6 @@ class Event:
                     feature_gdf[feature_name] = feat_list
 
                 except Exception as e:
-                    import pdb; pdb.set_trace()
                     self.logger.warning(f"Error for {feature_name} for {self.storm}, {self.region}, {subregion}:"\
                                         f"{e}\nCreating empty field.")
                     feature_gdf[feature_name] = [""] * len(feature_gdf)
@@ -882,10 +894,13 @@ class Event:
 
                 # Add reducer output to the Features in the collection
                 soilcarbon.projection().getInfo()
+                soilcarbon = soilcarbon.unmask(0)
                 mean_soilcarbon = soilcarbon.reduceRegions(collection=grid_ee,
                                                          reducer=ee.Reducer.mean(), scale=self.gridsize)
 
-                soilcarbon_list = mean_soilcarbon.aggregate_array('mean').getInfo()
+                sc_dict = mean_soilcarbon.getInfo()
+                soilcarbon_list = [feature['properties'].get('mean', np.nan) for feature in sc_dict['features']]
+                # soilcarbon_list = mean_soilcarbon.aggregate_array('mean').getInfo()
                 feature_gdf["soilcarbon"] = soilcarbon_list
             except Exception as e:
                 self.logger.warning(f"Error for soilcarbon for {self.storm}, {self.region}, {subregion}:"\
@@ -1051,7 +1066,7 @@ class Event:
                     feature_gdf['exclusion_mask'] = feature_gdf['exclusion_mask'].apply(lambda x: 1 if x > 0 else 0)
                 else:
                     self.logger.warning(f"No exclusion mask file with name {filepath}.")
-                    feature_gdf["exclusion_mask"] = [""] * len(feature_gdf)
+                    feature_gdf["exclusion_mask"] = [0] * len(feature_gdf)
             except Exception as e:
                 self.logger.warning(f"Error for exclusion mask for {self.storm}, {self.region}, {subregion}:"\
                                     f"{e}\nCreating empty fields.")

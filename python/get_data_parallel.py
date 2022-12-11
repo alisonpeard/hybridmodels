@@ -31,8 +31,8 @@ Use:
 
 # settings
 TEST_RUN = False             # check logging and multiprocessing behaving correctly (currently failing)
-feature_list = None  # ['deltares']          # None for all features or else ['feature1', 'feature2']
-recalculate_all = True      # false to just append to files
+feature_list = ['exclusion_mask'] # ['deltares']          # None for all features or else ['feature1', 'feature2']
+recalculate_all = False      # false to just append to files
 recalculate_features = True
 
 # imports

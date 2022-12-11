@@ -20,17 +20,17 @@ def main():
     gdf = pd.concat(gdfs)
     columns = [*gdf.columns]
     gdf, columns = model_utils.format_event_col(gdf, columns)
-#     events = [*gdf.event.unique()]
-    events = ['batsirai_menabe_0', 'batsirai_menabe_1']
-    
+    events = [*gdf.event.unique()]
+    # events = ['batsirai_menabe_0', 'batsirai_menabe_1']
+
     for event in events:
         try:
             gdf_event = gdf[gdf.event == event]
-            data_utils.add_features_to_spatial_data(wd, event, gdf_event, features_to_add, recalculate=False)
+            data_utils.add_features_to_spatial_data(wd, event, gdf_event, features_to_add, recalculate=True)
         except Exception as e:
             print(e)
-    
-    
-    
+
+
+
 if __name__ == "__main__":
     main()
