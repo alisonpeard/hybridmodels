@@ -145,7 +145,7 @@ def haversine(lon1, lat1, lon2_lst, lat2_lst):
 
 def holland_wind_field(r, wind, pressure, pressure_env, distance, lat):
     """
-    Calculate the gradient wind at a given radius from the storm centre.
+    Calculate the gradient wind and pressure at a given radius from the storm centre.
 
     Parameters:
     -----------
@@ -177,11 +177,14 @@ def holland_wind_field(r, wind, pressure, pressure_env, distance, lat):
     r *= 1000
     f = np.abs(1.45842300 * 10 ** -4 * np.sin(lat))
     e = 2.71828182846
+    pressure_env *= 100  # check
+    pressure *= 100
+
     # p_drop = 2*wind**2
-    p_drop = (pressure_env - pressure) * 100
-
-
+    p_drop = (pressure_env - pressure)
     B = rho * e * wind ** 2 / p_drop
+    p_distance = pressure_env * 100 + p_drop * np.exp(-(r / distance) ** B)
+
     Vg = (
         np.sqrt(
             ((r / distance) ** B) * (wind ** 2) * np.exp(1 - (r / distance) ** B)
@@ -189,7 +192,8 @@ def holland_wind_field(r, wind, pressure, pressure_env, distance, lat):
         )
         - (r * f) / 2
     )
-    return Vg
+
+    return Vg, p_distance
 
 
 def get_wind_field(ibtracs_gdf, feature_gdf, units_df, wind_col, pressure_col, rmw_col, acquisition_time):
@@ -245,9 +249,11 @@ def get_wind_field(ibtracs_gdf, feature_gdf, units_df, wind_col, pressure_col, r
 
                 # calculate wind field
                 wind_field = []
+                pressure_field = []
                 for distance in h_dists:
-                    wind_speed = holland_wind_field(r, wind, pressure, pressure_env, distance, lat)
+                    wind_speed, pressure_dist = holland_wind_field(r, wind, pressure, pressure_env, distance, lat)
                     wind_field.append(wind_speed)
+                    pressure_field.append(pressure_dist)
 
                 # reformat time string
                 date, time = iso_time.split(" ")
@@ -257,6 +263,7 @@ def get_wind_field(ibtracs_gdf, feature_gdf, units_df, wind_col, pressure_col, r
                 # if non-neglible wind, append to dataframe
                 if sum(wind_field) > 0:
                     feature_gdf[f"wnd{date}_{time}"] = wind_field
+                    feature_gdf[f"pressure{date}_{time}"] = pressure_field
             else:
                 logging.warning(f"No pressure drop for time {time}, skipping wind speed calculation.")
 

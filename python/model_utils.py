@@ -28,7 +28,6 @@ def load_raw_data(wd, features, temporal=False, binary=True, subset=''):
     columns = features + ['storm', 'region', 'subregion', "geometry", "floodfrac"]
     gdfs = load_all_gdfs(wd, subset=subset)
     gdfs, features, columns = process_winds(gdfs, temporal, features, columns)
-
     # one big GeoDataFrame
     gdf = pd.concat(gdfs)
     gdf.attrs['transforms'] = {}
@@ -50,16 +49,26 @@ def load_raw_data(wd, features, temporal=False, binary=True, subset=''):
                 features.append(lulc_col)
                 columns.append(lulc_col)
 
-    assert not gdf.isna().any().any(), f"{gdf.isna().any()[gdf.isna().any()].index[0]} has NaNs for {gdf.event[0]}."
+    # assert not gdf.isna().any().any(), f"{gdf.isna().any()[gdf.isna().any()].index[0]} has NaNs for {gdf.event[0]}."
+    # gdf = gdf[columns].dropna().reset_index(drop=True)
 
-    gdf = gdf[columns].dropna().reset_index(drop=True)
+    gdf = gdf.reset_index(drop=True)
     return gdf, features, columns
 
 
-def load_spatial_data(wd, subset=''):
-    """Load data from feature_stats_spatial: already processed."""
+def load_spatial_data(wd, subset='', intermediate_features=True):
+    """Load data with all features from feature_stats_spatial."""
     gdfs = load_all_gdfs(wd, 'feature_stats_spatial', subset)
     gdf = pd.concat(gdfs)
+
+    # fixes for issues with spatial data (can get rid of this after re-run)
+    if intermediate_features:
+        intermediate_features = [*data_utils.intermediate_features.keys()]
+        intermediate_features = [f"{feat}_to_pw" for feat in intermediate_features]
+        gdf[intermediate_features] = gdf[intermediate_features].replace(np.nan, 0.0)
+
+    gdf['exclusion_mask'] = gdf['exclusion_mask'].replace(np.nan, 0.0)
+
     return gdf
 
 
@@ -74,7 +83,6 @@ def load_all_gdfs(wd, folder='feature_stats', subset=''):
         filemask = [basename(file) in subset for file in files]
         files = list(compress(files, filemask))
     gdfs = [gpd.read_file(filename, SHAPE_RESTORE_SHX='YES') for filename in files]
-
     return gdfs
 
 
@@ -101,8 +109,8 @@ def process_winds(gdfs, temporal, features, columns):
         features = list(set(features + ['Tm6', 'Tm3', 'T']))
 
     else:
-
-        columns = list(set(columns + ["wind_avg"]))
+        climate_aggregates = ['wind_avg', 'wind_max', 'pressure_avg', 'pressure_min']
+        columns = list(set(columns + climate_aggregates))
         templist = []
 
         for gdf in gdfs:
@@ -111,7 +119,7 @@ def process_winds(gdfs, temporal, features, columns):
             except Exception as e:
                 print(f"Error for {gdf.region[0]}:\n{e}")
         gdfs = templist
-        features = list(set(features + ['wind_avg']))
+        features = list(set(features + ['wind_avg'] + ['pressure_avg']))
 
     return gdfs, features, columns
 
@@ -192,10 +200,11 @@ def get_wind_range(gdf, columns):
     timedeltas = [-6, -3, 0]
     window = [lf + timedelta(hours=x) for x in timedeltas]
     wind_cols = [f"wnd{x.strftime('%m-%d_%H')}" for x in window]
+    pressure_cols = [f"pressure{x.strftime('%m-%d_%H')}" for x in window]
 
     # create new columns and names and subset gdf
-    new_cols = columns + wind_cols
-    new_col_names = columns + ['Tm6', 'Tm3', 'T']
+    new_cols = columns + wind_cols + pressure_cols
+    new_col_names = columns + ['Wm6', 'Wm3', 'W'] + ['Pm6', 'Pm3', 'P']
 
     # add zeros column if any time isn't included
     for col in new_cols:
@@ -376,3 +385,71 @@ def one_hot_encode_feature(gdf, feature, features_binary, features, columns, not
     notes.append(f'One-hot encoded {feature}.')
     gdf.attrs['transforms'][feature].append("one-hot encoded")
     return gdf, list(set(features)), list(set(features_binary)), list(set(columns)), notes
+
+
+"""Functions for pre-processing data."""
+def remove_feature(gdf, to_remove, columns, notes):
+    if "transforms" not in gdf.attrs:
+        gdf.attrs['transforms'] = {}
+
+    gdf = gdf.drop(columns=to_remove)
+
+    for feature in to_remove:
+        notes.append(f'{feature} excluded')
+        gdf.attrs['transforms'][feature] = ['removed']
+
+    columns = [*gdf.columns]
+    return gdf, columns, notes
+
+
+def summarise_lulc(gdf, columns, features_binary, features_continuous, notes):
+    """Summarise LULC into four categories."""
+
+    # set up lulc dict
+    lulc_summary = {value: key for key, values in lulc_categories.items() for value in values}
+    lulc_summary_spatial = {f'{key}_spatial': f'{value}_spatial' for key, value in lulc_summary.items()}
+    lulc_summary = lulc_summary | lulc_summary_spatial
+
+    # change gdf
+    lulc_cols = [key for key in lulc_categories.keys()]
+    lulc_cols += [f'{key}_spatial' for key in lulc_cols]
+    gdf = gdf.rename(columns=lulc_summary)
+    gdf_lulc = gdf[lulc_cols].groupby(level=0, axis=1).any().astype(float)
+    gdf = gdf.drop(columns=lulc_cols)# .join(gdf_lulc)
+    gdf[lulc_cols] = gdf_lulc[lulc_cols]
+
+    # change corresponding variables
+    columns = [*set(lulc_summary[x] if x in lulc_summary.keys() else x for x in columns)]
+    features_binary = [*set(lulc_summary[x] if x in lulc_summary.keys() else x for x in features_binary)]
+    features_continuous = [*set(lulc_summary[x] if x in lulc_summary.keys() else x for x in features_continuous)]
+    nfeatures = len(features_binary) + len(features_continuous)
+
+    # make note of changes
+    if "transforms" not in gdf.attrs:
+        gdf.attrs['transforms'] = {}
+    if 'lulc' not in gdf.attrs['transforms']:
+        gdf.attrs['transforms']['lulc'] = []
+    gdf.attrs['transforms']['lulc'].append('summarised into three categories')
+    notes.append('summarised lulc columns into three categories')
+
+    return gdf, columns, features_binary, features_continuous, nfeatures, notes
+
+
+def random_undersample(gdf, n0, n1, notes, columns, SEED):
+
+    gdf_flood = gdf[gdf.floodfrac==1]
+    gdf_noflood = gdf[gdf.floodfrac==0]
+    gdf_noflood = gdf_noflood.sample(n=n1, random_state=SEED)
+    gdf_undersampled = pd.concat([gdf_flood, gdf_noflood])
+    gdf_undersampled = gdf_undersampled[columns]
+
+    # make note of changes
+    if "transforms" not in gdf.attrs:
+        gdf.attrs['transforms'] = {}
+    gdf_undersampled.attrs = gdf.attrs
+    if 'general' not in gdf_undersampled.attrs['transforms']:
+        gdf_undersampled.attrs['transforms']['general'] = []
+    gdf_undersampled.attrs['transforms']['general'].append('undersampled to same number of flood and non-flood.')
+    notes.append('undersampled to same number of flood and non-flood pixels')
+
+    return gdf_undersampled, notes

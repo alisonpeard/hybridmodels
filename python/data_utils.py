@@ -24,14 +24,23 @@ from wind_utils import *
 """Global settings."""
 floodthresh = 0
 pwater_thresh = 90
-binary_keywords = ['lulc', 'aqueduct', 'deltares']
+binary_keywords = ['lulc', 'aqueduct', 'deltares', 'exclusion_mask']
+
 default_features = ["elevation", "jrc_permwa", "slope_pw", "dist_pw",
-                    "precip", "soilcarbon", "mangrove", "ndvi", "aqueduct",
-                    "lulc", "deltares", "soiltemp1", "soiltemp2", "exclusion_mask"]
+                    "precip", "soilcarbon", "mangrove", "evi", "evi_anom", "aqueduct",
+                    "lulc", "deltares", "soiltemp1", "soiltemp2", "soiltemp1_anom", "soiltemp2_anom",
+                    "exclusion_mask", "mslp", "sp", "u10_u", "u10_v"]  #  "wind_avg", "pressure_avg" not included because get processed
+
 all_features = ["elevation", "jrc_permwa", "slope_pw", "dist_pw", "precip",
                 'mslp', 'sp', 'u10_u', 'u10_v', "soilcarbon", "mangrove",
-                "ndvi", "aqueduct", "lulc", "deltares", "soiltemp1", "soiltemp2",
+                "evi", "aqueduct", "lulc", "deltares", "soiltemp1", "soiltemp2",
                 "exclusion_mask"]
+
+spatial_features = ['lulc__90', 'deltares', 'lulc__20', 'aqueduct', 'lulc__80', 'lulc__30', 'soilcarbon', 'slope_pw',
+                    'precip', 'jrc_permwa', 'mangrove', 'lulc__40', 'evi', 'lulc__60', 'lulc__10', 'lulc__50', 'elevation',
+                    'lulc__95']
+
+intermediate_features = {'soilcarbon': np.mean, 'mangrove': np.mean, 'evi': np.mean, 'elevation': max}
 
 
 """Data acquisition functions."""
@@ -110,10 +119,6 @@ def get_grid_intersects(gdf, grid, col='floodfrac'):
 
 
 """Functions for adding spatial features."""
-spatial_features = ['lulc__90', 'deltares', 'lulc__20', 'aqueduct', 'lulc__80', 'lulc__30', 'soilcarbon', 'slope_pw',
-                    'precip', 'jrc_permwa', 'mangrove', 'lulc__40', 'ndvi', 'lulc__60', 'lulc__10', 'lulc__50', 'elevation',
-                    'lulc__95']
-intermediate_features = {'soilcarbon': np.mean, 'mangrove': np.mean, 'ndvi': np.mean, 'elevation': max}
 
 def process_continuous_neighbours(gdf, feature, neighbours):
     """Calculate mean of a group of cell neighbours."""
@@ -230,6 +235,7 @@ def add_intermediate_features(feature_gdf, events, intermediate_features, wd, th
                 # calculate max / mean of intersecting points
                 for feature, func in intermediate_features.items():
                     feature_gdf_pm.loc[dry_index, f'{feature}_to_pw'] = func(feature_gdf_pm.loc[intersecting_cells, feature])
+                    feature_gdf_pm.loc[~dry_index, f'{feature}_to_pw'] = 0.0
 
             del feature_gdf_pm['line_to_pw']
             gdf_tosave = feature_gdf_pm.to_crs(4326)

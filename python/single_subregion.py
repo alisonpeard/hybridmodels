@@ -7,12 +7,12 @@ Use:
 """
 
 # settings
-storm = "fani"
-region = "eastindia_0"
-subregion = 7
-nsubregions = 12
-feature_list = ['soilcarbon']     # None for all features or else ['feature1', 'feature2']
-recalculate_all = False       # false to just append to files
+storm = "roanu"
+region = "chittagong"
+subregion = 0
+nsubregions = 4
+feature_list = None                # None for all features or else ['feature1', 'feature2']
+recalculate_all = True            # False to just append to files
 recalculate_features = True
 
 # imports
@@ -24,9 +24,6 @@ import traceback
 import pandas as pd
 from event import Event
 from multiprocessing_logging import listener_configurer, worker_configurer, listener_process
-
-# import warnings
-# warnings.simplefilter('error', RuntimeWarning)
 
 # environment
 global bd, wd, log_file_path, log_name

@@ -1,0 +1,2 @@
+python get_data_parallel.py
+python get_spatial_features.py

@@ -2,6 +2,7 @@ from os.path import join, exists
 from os import remove
 from ast import literal_eval
 import logging
+from numbers import Number
 
 import pandas as pd
 import geopandas as gpd
@@ -29,8 +30,9 @@ httplib2shim.patch()
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
+# NOTE: correspond to processing functions and not final features
 default_features = ["flood", "elevation", "permwater", "pw_dists", "precipitation",
-                    "era5", "soilcarbon","soiltemp", "mangroves", "ndvi", "wind_fields", "aqueduct",
+                    "era5", "soilcarbon","soiltemp", "mangroves", "evi", "wind_fields", "aqueduct",
                     "lulc", "deltares", "exclusion_mask"]
 
 class Event:
@@ -211,10 +213,8 @@ class Event:
 
     def get_grid(self, subregion):
         """Make grid from geoJSON file."""
-#         geoJSON = literal_eval(pd.read_csv(join(self.wd, "csvs", 'event_geojsons.csv'),
-#                                            index_col="region").loc[self.region][0])
-        geoJSON = literal_eval(pd.read_csv(join(self.wd, "csvs", "current_datasets.csv"),  # 'event_geojsons.csv'
-                                           index_col="region").loc[self.region]['subregion_geojsons'])  # [0]
+        geoJSON = literal_eval(pd.read_csv(join(self.wd, "csvs", "current_datasets.csv"),
+                                           index_col="region").loc[self.region]['subregion_geojsons'])
 
         poly = [shape(x['geometry']) for x in geoJSON['features']]
         poly = gpd.GeoDataFrame({"geometry": poly[subregion]}, index=[0])
@@ -230,6 +230,9 @@ class Event:
 
         grid_pm = make_grid(*aoi_pm.total_bounds, length=self.gridsize, wide=self.gridsize)
         grid_lonlat = grid_pm.to_crs("EPSG:4326")
+
+        # assert len(grid_lonlat.overlay(aoi_lonlat, how='symmetric_difference')) == 0,\
+        #     "Problem generating grids from AoIs, non-perfect overlap."
 
         grid_lonlat.to_file(join(self.indir, f'grid_lonlat_{subregion}.gpkg'))
 
@@ -535,7 +538,6 @@ class Event:
                     .setDefaultProjection('EPSG:4326', scale=30)
                     .clip(aoi_ee)
                     .unmask(-999))
-
                 land = elev.gte(0)
 
                 # Add reducer output to the Features in the collection.
@@ -687,10 +689,14 @@ class Event:
             for feature in features:
                 self.logger.info(f"Calculating CHIRPS daily {feature} averages...")
                 try:
+                    # time range to average over
+                    start = ee.Date(self.startdate)
+                    end = ee.Date.parse('YYYY-MM-dd HH:mm', self.acquisition_time)
+
                     feat = ee.Image(ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")
                                       .select(feature)
                                       .filterBounds(aoi_ee)
-                                      .filterDate(self.startdate, self.enddate)
+                                      .filterDate(start, end)
                                       .mean()
                                       .clip(aoi_ee))
 
@@ -813,10 +819,15 @@ class Event:
             self.save_gdf(subregion)
 
 
-    def get_soiltemp(self, subregion, recalculate=False):
+    def get_soiltemp(self, subregion, recalculate=False, advance=1):
         """ERA5 Land Monthly Averaged ECMWF Climate Reanalysis.
 
-        Dataset availability: 1981-01-01T00:00:00Z – 2022-08-01T00:00:00
+        Dataset coverage: 1981-01-01T00:00:00Z – 2022-08-01T00:00:00
+
+        Parameters:
+        -----------
+        advance : int (default=1)
+            Number of months before storm start date to begin collecting data.
         """
 
         if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
@@ -836,23 +847,11 @@ class Event:
             for feature, feature_name in zip(features, feature_names):
                 self.logger.info(f"Calculating ERA5 {feature_name}...")
                 try:
-                    # include one month in advance to make sure covered
-                    start = ee.Date(self.startdate).advance(-1, 'month')
-                    end = ee.Date(self.enddate)
-                    feat = ee.Image(ee.ImageCollection("ECMWF/ERA5_LAND/MONTHLY")
-                                      .select(feature)
-                                      .filterBounds(aoi_ee)
-                                      .filterDate(start, end)
-                                      .sort('system:time_start', False).first()
-                                      .clip(aoi_ee))
-
-                    # unmask using the spatial average
-                    spatial_mean = feat.reduceRegions(aoi_ee,
-                                                      ee.Reducer.mean(),
-                                                      crs="EPSG:4326",
-                                                      scale=self.gridsize)
-                    spatial_mean = spatial_mean.getInfo()['features'][0]['properties']['mean']
-                    feat = feat.unmask(spatial_mean)
+                    collection = ee.ImageCollection("ECMWF/ERA5_LAND/MONTHLY").select(feature)
+                    start = ee.Date(self.startdate).advance(-advance, 'month')
+                    end = ee.Date.parse('YYYY-MM-dd HH:mm', self.acquisition_time)
+                    baseyear = 1981
+                    feat, anomaly = get_anomaly(collection, start, end, baseyear, aoi_ee, self.gridsize, spatial_mean)
 
                     # Add reducer output to the Features in the collection.
                     mean_feat = feat.reduceRegions(collection=grid_ee,
@@ -862,10 +861,21 @@ class Event:
                     feat_list = mean_feat.aggregate_array('mean').getInfo()
                     feature_gdf[feature_name] = feat_list
 
+
+                    # Add anomaly reducer output to Features
+                    mean_anomaly = anomaly.reduceRegions(collection=grid_ee,
+                                                   reducer=ee.Reducer.mean(),
+                                                   scale=self.gridsize,
+                                                   crs="EPSG:4326")
+                    anomaly_list = mean_anomaly.aggregate_array('mean').getInfo()
+                    feature_gdf[f'{feature_name}_anom'] = anomaly_list
+
+
                 except Exception as e:
                     self.logger.warning(f"Error for {feature_name} for {self.storm}, {self.region}, {subregion}:"\
                                         f"{e}\nCreating empty field.")
                     feature_gdf[feature_name] = [""] * len(feature_gdf)
+                    feature_gdf[f'{feature_name}_anom'] = [""] * len(feature_gdf)
 
 
             # save output
@@ -894,7 +904,6 @@ class Event:
 
                 # Add reducer output to the Features in the collection
                 soilcarbon.projection().getInfo()
-                soilcarbon = soilcarbon.unmask(0)
                 mean_soilcarbon = soilcarbon.reduceRegions(collection=grid_ee,
                                                          reducer=ee.Reducer.mean(), scale=self.gridsize)
 
@@ -948,13 +957,21 @@ class Event:
             self.save_gdf(subregion)
 
 
-    def get_ndvi(self, subregion, recalculate=False):
-        """NDVI (reprojected and masked from mangroves)"""
+    def get_evi(self, subregion, recalculate=False, advance=2):
+        """EVI (reprojected and masked from mangroves)
+
+        Dataset coverage: 2000-02-18T00:00:00Z–2022-12-19T00:00:00
+
+        Parameters:
+        ----------
+        advance : int (default=2)
+            Number of months before storm start date to average evi from.
+        """
 
         if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
 
-        if "ndvi" not in self.feature_gdf[subregion] or recalculate:
-            self.logger.info("Calculating NDVI...")
+        if "evi" not in self.feature_gdf[subregion] or recalculate:
+            self.logger.info("Calculating EVI...")
             feature_gdf = self.feature_gdf[subregion]
 
             try:
@@ -963,39 +980,33 @@ class Event:
                 aoi_ee = self.aoi_ee[subregion]
                 grid_ee = self.grid_ee[subregion]
 
-                # NDVI
-                ndvi = ee.Image(ee.ImageCollection("MODIS/006/MOD13Q1")
-                                .filterBounds(aoi_ee)
-                                .filterDate(ee.Date(self.startdate).advance(-2, 'month'), ee.Date(self.enddate))
-                                .mean()
-                                .clip(aoi_ee))
-
-                ndvi = ndvi.select('NDVI')
-
-                # # mask out mangroves -- TODO
-                # # reload mangroves for masking
-                # mangrove = ee.Image(ee.ImageCollection("LANDSAT/MANGROVE_FORESTS")
-                #                                .filterBounds(aoi_ee)
-                #                                .first()
-                #                                .clip(aoi_ee))
-                # self.logger.info("Masking out mangrove presence...")
-                # mangrove = mangrove.unmask(0)
-                # mangrove_mask = mangrove.eq(0)
-                # ndvi_masked = ndvi.updateMask(mangrove_mask)
-                # ndvi = ndvi_masked.unmask(0)
-                ndvi = ndvi.unmask(0)  # remove this line if using mangroves
+                # timeframe and collection
+                collection = ee.ImageCollection("MODIS/006/MOD13Q1").select('EVI')
+                start = ee.Date(self.startdate).advance(-advance, 'month')
+                end = ee.Date.parse('YYYY-MM-dd HH:mm', self.acquisition_time)
+                baseyear = 2000
+                evi, anomaly = get_anomaly(collection, start, end, baseyear, aoi_ee, self.gridsize, 0)
 
                 # calculate mean over feature collection
-                mean_ndvi = ndvi.reduceRegions(collection=grid_ee,
+                mean_evi = evi.reduceRegions(collection=grid_ee,
                                                reducer=ee.Reducer.mean(), scale=self.gridsize)
 
-                ndvi_list = mean_ndvi.aggregate_array('mean').getInfo()
-                feature_gdf["ndvi"] = ndvi_list
+                evi_list = mean_evi.aggregate_array('mean').getInfo()
+                feature_gdf["evi"] = evi_list
+
+                # Add anomaly reducer output to Features
+                mean_anomaly = anomaly.reduceRegions(collection=grid_ee,
+                                               reducer=ee.Reducer.mean(),
+                                               scale=self.gridsize,
+                                               crs="EPSG:4326")
+                anomaly_list = mean_anomaly.aggregate_array('mean').getInfo()
+                feature_gdf[f'evi_anom'] = anomaly_list
 
             except Exception as e:
-                self.logger.warning(f"Error for ndvi for {self.storm}, {self.region}, {subregion}:"\
+                self.logger.warning(f"Error for evi for {self.storm}, {self.region}, {subregion}:"\
                                     f"{e}\nCreating empty field.")
-                feature_gdf["ndvi"] = [""] * len(feature_gdf)
+                feature_gdf["evi"] = [""] * len(feature_gdf)
+                feature_gdf["evi_anom"] = [""] * len(feature_gdf)
 
             # save output
             self.feature_gdf[subregion] = feature_gdf
@@ -1033,11 +1044,20 @@ class Event:
                 timemask = ["wnd" in col for col in feature_gdf.columns]
                 timestamps = feature_gdf.columns[timemask]
                 feature_gdf["wind_avg"] = feature_gdf[timestamps].mean(axis=1)
+                feature_gdf['wind_max'] = feature_gdf[timestamps].max(axis=1)
+
+                timemask = ["pressure" in col for col in feature_gdf.columns]
+                timestamps = feature_gdf.columns[timemask]
+                feature_gdf["pressure_avg"] = feature_gdf[timestamps].mean(axis=1)
+                feature_gdf["pressure_min"] = feature_gdf[timestamps].min(axis=1)
 
             except Exception as e:
                 self.logger.warning(f"Error for wind fields for {self.storm}, {self.region}, {subregion}:"\
                                     f"{e}\nCreating empty field.")
                 feature_gdf["wind_avg"] = [""] * len(feature_gdf)
+                feature_gdf["wind_max"] = [""] * len(feature_gdf)
+                feature_gdf["pressure_avg"] = [""] * len(feature_gdf)
+                feature_gdf["pressure_min"] = [""] * len(feature_gdf)
 
             self.feature_gdf[subregion] = feature_gdf
             self.save_gdf(subregion)
@@ -1070,16 +1090,91 @@ class Event:
             except Exception as e:
                 self.logger.warning(f"Error for exclusion mask for {self.storm}, {self.region}, {subregion}:"\
                                     f"{e}\nCreating empty fields.")
-                feature_gdf["exclusion_mask"] = [""] * len(feature_gdf)
+                feature_gdf["exclusion_mask"] = [0] * len(feature_gdf)
 
             self.feature_gdf[subregion] = feature_gdf
             self.save_gdf(subregion)
 
 
-    # def add_intermediates_to_event(self, subregion, features_to_process: dict, thresh=pwater_thresh):
-    #     """Helper function to for add_intermediate_features between cell and nearest water cell."""
-    #
-    #     if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
-    #     feature_gdf = self.feature_gdf[subregion]
-    #     feature_gdf = add_intermediate_features(feature_gdf, features_to_process, thresh=thresh)
-    #     self.feature_gdf[subregion] = feature_gdf
+
+# Helper functions
+def spatial_mean(feat, aoi_ee, gridsize):
+
+    spatial_mean = feat.reduceRegions(aoi_ee,
+                                      ee.Reducer.mean(),
+                                      crs="EPSG:4326",
+                                      scale=gridsize)
+    spatial_mean = spatial_mean.getInfo()['features'][0]['properties']['mean']
+    feat = feat.unmask(spatial_mean)
+
+    return feat
+
+
+def get_feat(collection, start, end, aoi_ee, gridsize, unmask=0):
+    """Get the feature from GEE and unmask using selected method."""
+
+    feat = ee.Image(collection
+                    .filterBounds(aoi_ee)
+                    .filterDate(start, end)
+                    .sort('system:time_start', False)
+                    .mean()
+                    .clip(aoi_ee))
+
+    if isinstance(unmask, Number):
+        feat = feat.unmask(unmask)
+    elif callable(unmask):
+        feat = unmask(feat, aoi_ee, gridsize)
+
+    return feat
+
+
+
+def get_anomaly(collection, start, end, baseyear, aoi_ee, gridsize, unmask):
+    """Get anomaly for any collection.
+
+    Parameters:
+    -----------
+    collection : ee.ImageCollection
+        Must have single band selected.
+    start : ee.Date
+    end : ee.Date
+    baseyear : int
+
+
+    >> feat, anomaly = get_anomaly(collection, start, end, baseyear, aoi_ee, gridsize)
+    """
+    years = ee.List.sequence(ee.Number(baseyear), start.get('year'))
+
+
+    def window_average(year):
+        yeardiff = ee.Number.parse(start.get('year').format()).getInfo() - baseyear
+        window_start = start.advance(-yeardiff, 'years')
+        window_end = end.advance(-yeardiff, 'years')
+
+        mean = ee.Image(collection
+                          .filterBounds(aoi_ee)
+                          .filterDate(window_start, window_end)
+                          .mean()
+                          .clip(aoi_ee))
+        return mean.set('year', year)
+
+    # get temporal reference value
+    temporal_means = ee.ImageCollection.fromImages(years.map(window_average))
+
+
+
+    temporal_mean = ee.Image(temporal_means.mean())
+
+    spatiotemporal_mean = temporal_mean.reduceRegions(aoi_ee,
+                                                  ee.Reducer.mean(),
+                                                  crs="EPSG:4326",
+                                                  scale=gridsize)
+    spatiotemporal_mean =  spatiotemporal_mean.getInfo()['features'][0]['properties']['mean']
+    temporal_mean = temporal_mean.unmask(spatiotemporal_mean)
+
+
+    # get image for present time window
+    feat = get_feat(collection, start, end, aoi_ee, gridsize, unmask=unmask)
+    anomaly = feat.subtract(temporal_mean)
+
+    return feat, anomaly

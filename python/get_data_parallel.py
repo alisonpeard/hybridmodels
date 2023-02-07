@@ -30,10 +30,11 @@ Use:
 """
 
 # settings
-TEST_RUN = False             # check logging and multiprocessing behaving correctly (currently failing)
-feature_list = ['exclusion_mask'] # ['deltares']          # None for all features or else ['feature1', 'feature2']
-recalculate_all = False      # false to just append to files
+TEST_RUN = False                        # check logging and multiprocessing behaving correctly (currently failing)
+feature_list = None          # None for all features or else ['feature1', 'feature2']
+recalculate_all = True      # false to just append to files
 recalculate_features = True
+keyword = "yes"
 
 # imports
 from os.path import join, dirname
@@ -87,7 +88,7 @@ def process_events(row, queue, configurer):
 def main():
     # load and parse data
     df = pd.read_csv(join(wd, "csvs", "current_datasets.csv"))
-    df = df[df.to_process == "yes"]  # only process selected events
+    df = df[df.to_process == keyword]  # only process selected events
     events = [row for _, row in df.iterrows()]
 
     # start the listener for pool
@@ -97,7 +98,7 @@ def main():
     listener.start()
 
     # start the pool of workers
-    npools = multiprocessing.cpu_count() - 1
+    npools = multiprocessing.cpu_count() - 3
     with multiprocessing.Pool(npools) as pool:
         params = []
         for event in events:
