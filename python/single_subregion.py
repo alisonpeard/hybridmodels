@@ -7,10 +7,10 @@ Use:
 """
 
 # settings
-storm = "roanu"
-region = "chittagong"
-subregion = 0
-nsubregions = 4
+storm = "fani"
+region = "eastindia_0"
+subregion = 7
+nsubregions = 9
 feature_list = None                # None for all features or else ['feature1', 'feature2']
 recalculate_all = True            # False to just append to files
 recalculate_features = True
@@ -19,7 +19,6 @@ recalculate_features = True
 from os.path import join, dirname
 import logging
 import logging.handlers
-import multiprocessing
 import traceback
 import pandas as pd
 from event import Event

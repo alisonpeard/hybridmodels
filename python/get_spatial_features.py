@@ -15,6 +15,7 @@ import data_utils
 import warnings
 from shapely.errors import ShapelyDeprecationWarning
 warnings.filterwarnings("ignore", category=ShapelyDeprecationWarning)
+warnings.filterwarnings("ignore", category=RuntimeWarning)  # suppress intersection warning for non-intersecting Polygons (bug)
 
 # environment
 bd = dirname(__file__)
@@ -41,7 +42,7 @@ recalculate_neighbours = True # turn off in contingency matrices already present
 verbose = True
 temporal = False
 binary = True
-keyword = 'yes'
+keyword = 'spatial'
 
 def main():
     # load and parse data
@@ -55,10 +56,14 @@ def main():
             event = f"{storm}_{subregion}"
             logger.info(f"Add spatial features to {event}.")
             try:
-                gdf, features, columns = model_utils.load_raw_data(wd, data_utils.default_features, temporal, binary, subset=event)
+                gdf, _, _ = model_utils.load_raw_data(wd, data_utils.default_features, temporal, binary, subset=event)
+                print(f"gdf length afer loading: {len(gdf)} cells\n")
                 data_utils.add_spatial_features(gdf, [event], data_utils.spatial_features, wd, recalculate_neighbours=recalculate_neighbours, recalculate=recalculate, verbose=verbose)
+                print(f"gdf length after adding spatial features: {len(gdf)} cells\n")
                 gdf = model_utils.load_spatial_data(wd, subset=event, intermediate_features=False)
                 data_utils.add_intermediate_features(gdf, [event], data_utils.intermediate_features, wd, recalculate=recalculate, verbose=verbose)
+                print(f"gdf length after adding intermediate features: {len(gdf)} cells\n")
+
             except Exception:
                 logger.error(traceback.format_exc())
 

@@ -30,9 +30,9 @@ Use:
 """
 
 # settings
-TEST_RUN = False                        # check logging and multiprocessing behaving correctly (currently failing)
+TEST_RUN = False             # check logging and multiprocessing behaving correctly (currently failing)
 feature_list = None          # None for all features or else ['feature1', 'feature2']
-recalculate_all = True      # false to just append to files
+recalculate_all = True       # false to just append to files
 recalculate_features = True
 keyword = "yes"
 

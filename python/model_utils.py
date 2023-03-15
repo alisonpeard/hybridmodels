@@ -13,6 +13,18 @@ from datetime import datetime, timedelta
 
 import data_utils
 
+"""Final features to use in model."""
+model_features = ["elevation", "elevation_spatial", "elevation_to_pw",
+                 "jrc_permwa", "jrc_permwa_spatial", "slope_pw", "dist_pw",
+                 "precip", "wind_avg", "pressure_avg", "wind_max", "pressure_min",
+                 "mangrove", "mangrove_spatial", "mangrove_to_pw",
+                 "evi", "evi_anom", "evi_spatial", "evi_to_pw",
+                 "built_up", "bare_soil",
+                 "soilcarbon", "soilcarbon_spatial", "soilcarbon_to_pw",
+                 "soiltemp2", "soiltemp2_anom",
+                 "aqueduct", "deltares",
+                 "exclusion_mask"] 
+
 lulc_categories = {'built_up': ['lulc__50'],
                    'bare_soil': ['lulc__60', 'lulc__70'],
                    'vegetated': ['lulc__10', 'lulc__20', 'lulc__30', 'lulc__40',
@@ -23,7 +35,22 @@ lulc_cols = ['lulc__20', 'lulc__30', 'lulc__40', 'lulc__50', 'lulc__60', 'lulc__
 
 ## MAIN DATA-LOADING FUNCTIONS
 def load_raw_data(wd, features, temporal=False, binary=True, subset=''):
-    """Load data from feature_stats: needs some processing to be usable."""
+    """Load data from feature_stats: needs some processing to be usable.
+    
+    Parameters:
+    -----------
+    wd : str
+        path to working directory
+    features : list
+        list of feature names to load (exclusing wind and pressure data)
+    temporal : bool (default=False)
+        whether to generate temporal or temporally-aggregated wind and pressure features
+    binary : bool (default=True)
+        whether to binarise flooded fraction to binary presence / absence
+    subset : list (default='')
+        subset of events to load, use '' for all events
+
+    """
     # Load list of gdfs
     columns = features + ['storm', 'region', 'subregion', "geometry", "floodfrac"]
     gdfs = load_all_gdfs(wd, subset=subset)
@@ -32,6 +59,7 @@ def load_raw_data(wd, features, temporal=False, binary=True, subset=''):
     gdf = pd.concat(gdfs)
     gdf.attrs['transforms'] = {}
     gdf, columns = format_event_col(gdf, columns)
+    
     if binary:
         gdf, features, columns = binarise_feature(gdf, 'floodfrac', 'floodfrac', data_utils.floodthresh, features, columns)
         gdf.attrs['transforms']['floodfrac'] = 'binarised flood fraction'
@@ -45,12 +73,9 @@ def load_raw_data(wd, features, temporal=False, binary=True, subset=''):
         gdf, features, _, columns, _ = one_hot_encode_feature(gdf, 'lulc', features_binary, features, columns)
         for lulc_col in lulc_cols:
             if lulc_col not in [*gdf.columns]:
-                gdf[lulc_col] = [''] * len(gdf)
+                gdf[lulc_col] = [0] * len(gdf)
                 features.append(lulc_col)
                 columns.append(lulc_col)
-
-    # assert not gdf.isna().any().any(), f"{gdf.isna().any()[gdf.isna().any()].index[0]} has NaNs for {gdf.event[0]}."
-    # gdf = gdf[columns].dropna().reset_index(drop=True)
 
     gdf = gdf.reset_index(drop=True)
     return gdf, features, columns
@@ -78,7 +103,7 @@ def load_all_gdfs(wd, folder='feature_stats', subset=''):
     files = [filename for filename in glob.glob(join(wd, folder, "*.gpkg"))]
 
     # make sure subset strings in files
-    if not subset=='':
+    if not subset == '':
         subset = [f'{file}.gpkg' for file in [subset]]
         filemask = [basename(file) in subset for file in files]
         files = list(compress(files, filemask))
@@ -119,7 +144,7 @@ def process_winds(gdfs, temporal, features, columns):
             except Exception as e:
                 print(f"Error for {gdf.region[0]}:\n{e}")
         gdfs = templist
-        features = list(set(features + ['wind_avg'] + ['pressure_avg']))
+        features = list(set(features + climate_aggregates))
 
     return gdfs, features, columns
 
@@ -261,7 +286,7 @@ def plot_history(history, metric='root_mean_squared_error'):
     plt.plot(history.epoch, np.array(history.history[f'val_{metric}']),
            label = 'valid')
     plt.legend()
-    plt.ylim([0, max(history.history['loss'])])
+    plt.ylim([0, max(history.history[metric])])
 
 
 def plot_prediction(test_labels, y_pred, title):
@@ -361,20 +386,17 @@ def normalise_feature(gdf: gpd.GeoDataFrame, feature: str):
         return gdf
     else:
         print(f"The {feature} is already normalised.")
-        return None
+        return gdf
 
 
 def one_hot_encode_feature(gdf, feature, features_binary, features, columns, notes=[]):
     """One-hot encode a binary features, update binary features lists."""
-    if "transforms" not in gdf.attrs:
-        gdf.attrs['transforms'] = {}
 
-    if feature not in gdf.attrs['transforms']:
-        gdf.attrs['transforms'][feature] = []
-
+    # cast all to string to make sure no duplicate columns
+    gdf[feature] = gdf[feature].astype(str)
     onehot = pd.get_dummies(gdf[feature], prefix=f'{feature}_')
     cols = [*onehot.columns]
-    gdf[cols] = onehot
+    gdf = pd.concat([gdf, onehot], axis=1)
     gdf = gdf.drop(columns=[feature])
     features.remove(feature)
     features_binary.remove(feature)
@@ -383,7 +405,6 @@ def one_hot_encode_feature(gdf, feature, features_binary, features, columns, not
     columns.remove(feature)
     columns += cols
     notes.append(f'One-hot encoded {feature}.')
-    gdf.attrs['transforms'][feature].append("one-hot encoded")
     return gdf, list(set(features)), list(set(features_binary)), list(set(columns)), notes
 
 
@@ -402,17 +423,19 @@ def remove_feature(gdf, to_remove, columns, notes):
     return gdf, columns, notes
 
 
-def summarise_lulc(gdf, columns, features_binary, features_continuous, notes):
+def summarise_lulc(gdf, columns, features_binary, features_continuous, notes, spatial=False):
     """Summarise LULC into four categories."""
 
     # set up lulc dict
     lulc_summary = {value: key for key, values in lulc_categories.items() for value in values}
-    lulc_summary_spatial = {f'{key}_spatial': f'{value}_spatial' for key, value in lulc_summary.items()}
-    lulc_summary = lulc_summary | lulc_summary_spatial
+    if spatial:
+        lulc_summary_spatial = {f'{key}_spatial': f'{value}_spatial' for key, value in lulc_summary.items()}
+        lulc_summary = lulc_summary | lulc_summary_spatial
 
     # change gdf
     lulc_cols = [key for key in lulc_categories.keys()]
-    lulc_cols += [f'{key}_spatial' for key in lulc_cols]
+    if spatial:
+        lulc_cols += [f'{key}_spatial' for key in lulc_cols]
     gdf = gdf.rename(columns=lulc_summary)
     gdf_lulc = gdf[lulc_cols].groupby(level=0, axis=1).any().astype(float)
     gdf = gdf.drop(columns=lulc_cols)# .join(gdf_lulc)

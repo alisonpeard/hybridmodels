@@ -96,9 +96,9 @@ class Event:
         self.gridsize = gridsize
         self.nsubregions = nsubregions
         self.subregions = [x for x in range(nsubregions)]
-        self.wd = wd  # working dir
-        self.bd = bd  # base dir
-        self.indir = join(self.wd, f"{storm}_{region}")
+        self.wd = wd                                     # working dir
+        self.bd = bd                                     # base dir
+        self.indir = join(self.wd, f"{storm}_{region}")  # directory containing flood file etc.
         self.startdate, self.enddate = [*pd.read_csv(join(self.wd, "csvs", "event_dates.csv"),
                                    index_col="storm").loc[storm]]
         self.acquisition_time = pd.read_csv(join(self.wd, 'csvs', 'current_datasets.csv'),
@@ -194,7 +194,7 @@ class Event:
 
 
     def save_gdf(self, subregion):
-        """Save/update the GeoDataFrame as a shapefile."""
+        """Save/update the GeoDataFrame as a GPKG file."""
         feature_gdf = self.feature_gdf[subregion]
 
         # make sure only saves if correct size
@@ -206,16 +206,17 @@ class Event:
 
 
     def make_grids(self):
-        """Calculate all the grids."""
+        """Calculate the grid for all subregions of an event."""
         for n in self.subregions:
             self.get_grid(n)
 
 
     def get_grid(self, subregion):
-        """Make grid from geoJSON file."""
+        """Make spatial grid from geoJSON file for given subregion."""
+
+        # grab approx. aois from geoJSON file
         geoJSON = literal_eval(pd.read_csv(join(self.wd, "csvs", "current_datasets.csv"),
                                            index_col="region").loc[self.region]['subregion_geojsons'])
-
         poly = [shape(x['geometry']) for x in geoJSON['features']]
         poly = gpd.GeoDataFrame({"geometry": poly[subregion]}, index=[0])
         poly = poly.set_crs("EPSG:4326").to_crs("EPSG:3857").geometry[0]
@@ -228,14 +229,18 @@ class Event:
         aoi_pm = gpd.GeoDataFrame({"geometry": poly}, index=[0], crs="EPSG:3857")
         aoi_lonlat = aoi_pm.to_crs("EPSG:4326")
 
+        # create a grid over the aoi
         grid_pm = make_grid(*aoi_pm.total_bounds, length=self.gridsize, wide=self.gridsize)
         grid_lonlat = grid_pm.to_crs("EPSG:4326")
 
-        # assert len(grid_lonlat.overlay(aoi_lonlat, how='symmetric_difference')) == 0,\
-        #     "Problem generating grids from AoIs, non-perfect overlap."
+        # redefine aoi to make sure aoi and grid are totally aligned
+        aoi_pm = gpd.GeoDataFrame({'geometry': grid_pm.unary_union}, index=[0], crs='EPSG:3857')
+        aoi_lonlat = aoi_pm.to_crs("EPSG:4326")
 
+        # save the grid
         grid_lonlat.to_file(join(self.indir, f'grid_lonlat_{subregion}.gpkg'))
 
+        # set all instance variables
         self.aoi_pm[subregion] = aoi_pm
         self.aoi_lonlat[subregion] = aoi_lonlat
         self.grid_pm[subregion] = grid_pm
@@ -243,7 +248,7 @@ class Event:
 
 
     def get_flood(self, subregion, recalculate=False, cols=['det_method', 'obj_desc']):
-        """Calculate flood fractions per gridcell."""
+        """Calculate flood fraction per gridcell."""
 
         if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
         if self.flood is None: self.get_floodfile()
@@ -276,7 +281,7 @@ class Event:
             except Exception as e:
                 self.logger.warning(f"{self.storm}_{self.region}_{subregion}: error adding extra flood info:\n{e}\nCreating empty fields")
                 for col in cols:
-                    feature_gdf[col] =  [""] * len(feature_gdf)
+                    feature_gdf[col] =  [np.nan] * len(feature_gdf)
 
             # save the feature_stats shapefile with flood fraction
             self.feature_gdf[subregion] = feature_gdf
@@ -370,22 +375,24 @@ class Event:
                 # Add reducer output to features
                 mean_gebco = gebco.mask(ocean).unmask(0).reduceRegions(collection=grid_ee,
                                                          reducer=ee.Reducer.mean(), scale=self.gridsize)
-                gebco_list = mean_gebco.aggregate_array('mean').getInfo()
+                # gebco_list = mean_gebco.aggregate_array('mean').getInfo()
+                gebco_list = mean_gebco.getInfo()
+                gebco_list = [feat['properties'].get('mean', np.nan) for feat in gebco_list['features']]
+
                 feature_gdf["gebco"] = gebco_list
 
             except Exception as e:
                 self.logger.warning(f"Error for gebco for {self.storm}, {self.region}, {subregion}:"\
                                     f"{e}\nCreating empty fields.")
-                feature_gdf["gebco"] = [""] * len(feature_gdf)
-
+                feature_gdf["gebco"] = [np.nan] * len(feature_gdf)
             self.feature_gdf[subregion] = feature_gdf
             self.save_gdf(subregion)
 
 
     def get_aqueduct(self, subregion, recalculate=False):
-        """Download Aqueduct flood data.
+        """Download Aqueduct flood hazard maps.
 
-        Aqueduct coastal flood hazard data.
+        Chooses map with most correlation to flood...
         """
         if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
 
@@ -421,14 +428,14 @@ class Event:
                         floodfrac = flood_present.reduceRegions(collection=grid_ee, reducer=ee.Reducer.mean(), scale=self.gridsize)
                         aqueduct_list = floodfrac.aggregate_array('mean').getInfo()
                         feature_gdf[f"aqueduct_{rp}"] = aqueduct_list
-                        feature_gdf[f"aqueduct_{rp}"] = feature_gdf[f"aqueduct_{rp}"].replace('', 0.0)
+                        feature_gdf[f"aqueduct_{rp}"] = feature_gdf[f"aqueduct_{rp}"].replace(np.nan, 0.0)
                         corr = feature_gdf['floodfrac'].corr(feature_gdf[f"aqueduct_{rp}"])
                         assert not np.isnan(corr), f"Got a NaN correlation for RP {rp}."
                         corrs[rp] = corr
 
                     except Exception as e:
                         self.logger.error(f"{self.storm}, {self.region}, {subregion}:\n{e}")
-                        # feature_gdf[f"aqueduct_{rp}"] = [""] * len(feature_gdf)
+                        # feature_gdf[f"aqueduct_{rp}"] = [np.nan] * len(feature_gdf)
 
                 allzero = True
                 for rp in rps:
@@ -447,7 +454,7 @@ class Event:
             except Exception as e:
                 self.logger.error(f"Error for Aqueduct data for {self.storm}, {self.region}, {subregion}"\
                                     f"\n{e}\nCreating empty fields.")
-                feature_gdf["aqueduct"] = [""] * len(feature_gdf)
+                feature_gdf["aqueduct"] = [np.nan] * len(feature_gdf)
 
             self.feature_gdf[subregion] = feature_gdf
             self.save_gdf(subregion)
@@ -506,7 +513,7 @@ class Event:
             except Exception as e:
                 self.logger.error(f"Error for Deltares data for {self.storm}, {self.region}, {subregion}:"\
                                     f"\n{e}\n\nCreating empty fields.")
-                feature_gdf["deltares"] = [""] * len(feature_gdf)
+                feature_gdf["deltares"] = [np.nan] * len(feature_gdf)
 
             self.feature_gdf[subregion] = feature_gdf
             self.save_gdf(subregion)
@@ -544,13 +551,15 @@ class Event:
                 mean_elev = elev.mask(land).unmask(0).reduceRegions(collection=grid_ee,
                                                          reducer=ee.Reducer.mean(), scale=self.gridsize)
 
-                elev_list = mean_elev.aggregate_array('mean').getInfo()
+                # elev_list = mean_elev.aggregate_array('mean').getInfo()
+                elev_list = mean_elev.getInfo()
+                elev_list = [feat['properties'].get('mean', np.nan) for feat in elev_list['features']]
                 feature_gdf["fabdem"] = elev_list
 
             except Exception as e:
                 self.logger.warning(f"Error for fabdem for {self.storm}, {self.region}, {subregion}:"\
                                     f"{e}\nCreating empty fields.")
-                feature_gdf["fabdem"] = [""] * len(feature_gdf)
+                feature_gdf["fabdem"] = [np.nan] * len(feature_gdf)
 
             self.feature_gdf[subregion] = feature_gdf
             self.save_gdf(subregion)
@@ -594,10 +603,10 @@ class Event:
                 # Add reducer output to the Features in the collection.
                 mean_jrc_permwater = jrc_permwater.reduceRegions(collection=grid_ee,
                                                          reducer=ee.Reducer.mean(), scale=self.gridsize)
-                jrc_permwater_list = mean_jrc_permwater.aggregate_array('mean').getInfo()
+                # jrc_permwater_list = mean_jrc_permwater.aggregate_array('mean').getInfo()
+                jrc_permwater_list = mean_jrc_permwater.getInfo()
+                jrc_permwater_list = [feat['properties'].get('mean', np.nan) for feat in jrc_permwater_list['features']]
 
-
-                jrc_permwater_list2 = []
                 feature_gdf["jrc_permwa"] = jrc_permwater_list
 
                 # slightly hack-y way of filling-in ocean
@@ -608,7 +617,7 @@ class Event:
             except Exception as e:
                 self.logger.warning(f"Error for jrc_permwa for {self.storm}, {self.region}, {subregion}:"\
                                     f"{e}\nCreating empty fields.")
-                feature_gdf["jrc_permwa"] = [""] * len(feature_gdf)
+                feature_gdf["jrc_permwa"] = [np.nan] * len(feature_gdf)
 
             # save to gdf
             self.feature_gdf[subregion] = feature_gdf
@@ -664,8 +673,8 @@ class Event:
             except Exception as e:
                 self.logger.warning(f"Error for dist_pw and slope_pw for {self.storm}, {self.region}, {subregion}:"\
                                     f"{e}\nCreating empty fields.")
-                feature_gdf["dist_pw"] = [""] * len(feature_gdf)
-                feature_gdf["slope_pw"] = [""] * len(feature_gdf)
+                feature_gdf["dist_pw"] = [np.nan] * len(feature_gdf)
+                feature_gdf["slope_pw"] = [np.nan] * len(feature_gdf)
 
             # save to gdf
             self.feature_gdf[subregion] = feature_gdf
@@ -707,14 +716,18 @@ class Event:
 
                     # Add reducer output to the Features in the collection.
                     mean_feat = feat.reduceRegions(collection=grid_ee,
-                                                             reducer=ee.Reducer.mean(), scale=self.gridsize)
-                    feat_list = mean_feat.aggregate_array('mean').getInfo()
+                                                   reducer=ee.Reducer.mean(),
+                                                   scale=self.gridsize)
+                    # feat_list = mean_feat.aggregate_array('mean').getInfo()
+                    feat_list = mean_feat.getInfo()
+                    feat_list = [feat['properties'].get('mean', np.nan) for feat in feat_list['features']]
+
                     feature_gdf[feature[:6]] = feat_list
 
                 except Exception as e:
                     self.logger.warning(f"Error for {feature} for {self.storm}, {self.region}, {subregion}:"\
                                         f"{e}\nCreating empty field.")
-                    feature_gdf[feature] = [""] * len(feature_gdf)
+                    feature_gdf[feature[:6]] = [np.nan] * len(feature_gdf)
 
             # save output
             self.feature_gdf[subregion] = feature_gdf
@@ -747,13 +760,16 @@ class Event:
                 mode_feat = feat.reduceRegions(collection=grid_ee,
                                                reducer=ee.Reducer.mode(),
                                                scale=self.gridsize)
-                feat_list = mode_feat.aggregate_array('mode').getInfo()
+                # feat_list = mode_feat.aggregate_array('mode').getInfo()
+                feat_list = mode_feat.getInfo()
+                feat_list = [feat['properties'].get('mode', '') for feat in feat_list['features']]
                 feature_gdf['lulc'] = feat_list
             except Exception as e:
                 self.logger.warning(f"Error for lulc for {self.storm}, {self.region}, {subregion}:"\
                                     f"{e}\nCreating empty field.")
-                feature_gdf["lulc"] = [""] * len(feature_gdf)
-
+                feature_gdf["lulc"] = [''] * len(feature_gdf)
+            
+            feature_gdf['lulc'] = feature_gdf['lulc'].astype(str)  # make sure string for one-hot-encoding
             # save output
             self.feature_gdf[subregion] = feature_gdf
             self.save_gdf(subregion)
@@ -761,7 +777,7 @@ class Event:
 
 
     def get_era5(self, subregion, recalculate=False):
-        """ERA5 Daily MSLP, surface pressure and (x, y) U10 wind components.
+        """ERA5 Daily MSLP, surface pressure and (x, y) MSW10 wind components.
 
         Dataset available: 1979-01-02T00:00:00Z – 2020-07-09T00:00:00
         """
@@ -805,13 +821,16 @@ class Event:
                                                    scale=self.gridsize,
                                                    crs="EPSG:4326")
 
-                    feat_list = mean_feat.aggregate_array('mean').getInfo()
+                    # feat_list = mean_feat.aggregate_array('mean').getInfo()
+                    feat_list = mean_feat.getInfo()
+                    feat_list = [feat['properties'].get('mean', np.nan) for feat in feat_list['features']]
+
                     feature_gdf[feature_name] = feat_list
 
                 except Exception as e:
                     self.logger.warning(f"Error for {feature_name} for {self.storm}, {self.region}, {subregion}:"\
                                         f"{e}\nCreating empty field.")
-                    feature_gdf[feature_name] = [""] * len(feature_gdf)
+                    feature_gdf[feature_name] = [np.nan] * len(feature_gdf)
 
 
             # save output
@@ -858,7 +877,9 @@ class Event:
                                                    reducer=ee.Reducer.mean(),
                                                    scale=self.gridsize,
                                                    crs="EPSG:4326")
-                    feat_list = mean_feat.aggregate_array('mean').getInfo()
+                    # feat_list = mean_feat.aggregate_array('mean').getInfo()
+                    feat_list = mean_feat.getInfo()
+                    feat_list = [feat['properties'].get('mean', np.nan) for feat in feat_list['features']]
                     feature_gdf[feature_name] = feat_list
 
 
@@ -867,15 +888,17 @@ class Event:
                                                    reducer=ee.Reducer.mean(),
                                                    scale=self.gridsize,
                                                    crs="EPSG:4326")
-                    anomaly_list = mean_anomaly.aggregate_array('mean').getInfo()
+                    # anomaly_list = mean_anomaly.aggregate_array('mean').getInfo()
+                    anomaly_list = mean_anomaly.getInfo()
+                    anomaly_list = [feat['properties'].get('mean', np.nan) for feat in anomaly_list['features']]
                     feature_gdf[f'{feature_name}_anom'] = anomaly_list
 
 
                 except Exception as e:
                     self.logger.warning(f"Error for {feature_name} for {self.storm}, {self.region}, {subregion}:"\
                                         f"{e}\nCreating empty field.")
-                    feature_gdf[feature_name] = [""] * len(feature_gdf)
-                    feature_gdf[f'{feature_name}_anom'] = [""] * len(feature_gdf)
+                    feature_gdf[feature_name] = [np.nan] * len(feature_gdf)
+                    feature_gdf[f'{feature_name}_anom'] = [np.nan] * len(feature_gdf)
 
 
             # save output
@@ -914,7 +937,7 @@ class Event:
             except Exception as e:
                 self.logger.warning(f"Error for soilcarbon for {self.storm}, {self.region}, {subregion}:"\
                                     f"{e}\nCreating empty field.")
-                feature_gdf["soilcarbon"] = [""] * len(feature_gdf)
+                feature_gdf["soilcarbon"] = [np.nan] * len(feature_gdf)
 
             # save output file
             self.feature_gdf[subregion] = feature_gdf
@@ -922,7 +945,10 @@ class Event:
 
 
     def get_mangroves(self, subregion, recalculate=False):
-        """Mangrove forests from year 2000 (Giri, 2011)"""
+        """Mangrove forests from year 2000 (Giri, 2011).
+        
+        Dataset has 30m resolution and binary presence absence values. This function calculates
+        the fraction of each cell covered by mangrove."""
         if self.feature_gdf[subregion] is None: self.get_gdf(subregion)
 
         if "mangrove" not in self.feature_gdf[subregion] or recalculate:
@@ -950,7 +976,7 @@ class Event:
             except Exception as e:
                 self.logger.warning(f"Error for mangrove for {self.storm}, {self.region}, {subregion}:"\
                                     f"{e}\nCreating empty field.")
-                feature_gdf["mangrove"] = [""] * len(feature_gdf)
+                feature_gdf["mangrove"] = [np.nan] * len(feature_gdf)
 
             # save output
             self.feature_gdf[subregion] = feature_gdf
@@ -991,7 +1017,9 @@ class Event:
                 mean_evi = evi.reduceRegions(collection=grid_ee,
                                                reducer=ee.Reducer.mean(), scale=self.gridsize)
 
-                evi_list = mean_evi.aggregate_array('mean').getInfo()
+                # evi_list = mean_evi.aggregate_array('mean').getInfo()
+                evi_list = mean_evi.getInfo()
+                evi_list = [feat['properties'].get('mean', np.nan) for feat in evi_list['features']]
                 feature_gdf["evi"] = evi_list
 
                 # Add anomaly reducer output to Features
@@ -999,14 +1027,16 @@ class Event:
                                                reducer=ee.Reducer.mean(),
                                                scale=self.gridsize,
                                                crs="EPSG:4326")
-                anomaly_list = mean_anomaly.aggregate_array('mean').getInfo()
+                # anomaly_list = mean_anomaly.aggregate_array('mean').getInfo()
+                anomaly_list = mean_anomaly.getInfo()
+                anomaly_list = [feat['properties'].get('mean', np.nan) for feat in anomaly_list['features']]
                 feature_gdf[f'evi_anom'] = anomaly_list
 
             except Exception as e:
                 self.logger.warning(f"Error for evi for {self.storm}, {self.region}, {subregion}:"\
                                     f"{e}\nCreating empty field.")
-                feature_gdf["evi"] = [""] * len(feature_gdf)
-                feature_gdf["evi_anom"] = [""] * len(feature_gdf)
+                feature_gdf["evi"] = [np.nan] * len(feature_gdf)
+                feature_gdf["evi_anom"] = [np.nan] * len(feature_gdf)
 
             # save output
             self.feature_gdf[subregion] = feature_gdf
@@ -1054,10 +1084,10 @@ class Event:
             except Exception as e:
                 self.logger.warning(f"Error for wind fields for {self.storm}, {self.region}, {subregion}:"\
                                     f"{e}\nCreating empty field.")
-                feature_gdf["wind_avg"] = [""] * len(feature_gdf)
-                feature_gdf["wind_max"] = [""] * len(feature_gdf)
-                feature_gdf["pressure_avg"] = [""] * len(feature_gdf)
-                feature_gdf["pressure_min"] = [""] * len(feature_gdf)
+                feature_gdf["wind_avg"] = [np.nan] * len(feature_gdf)
+                feature_gdf["wind_max"] = [np.nan] * len(feature_gdf)
+                feature_gdf["pressure_avg"] = [np.nan] * len(feature_gdf)
+                feature_gdf["pressure_min"] = [np.nan] * len(feature_gdf)
 
             self.feature_gdf[subregion] = feature_gdf
             self.save_gdf(subregion)
@@ -1075,7 +1105,7 @@ class Event:
             feature_gdf = self.feature_gdf[subregion]
 
             try:
-                feature_gdf['exclusion_mask'] = [""] * len(feature_gdf)
+                feature_gdf['exclusion_mask'] = [np.nan] * len(feature_gdf)
                 filepath = join(self.wd, f"{self.storm}_{self.region}", "exclusion_mask.gpkg")
                 if exists(filepath):
                     feature_gdf = self.feature_gdf[subregion]
@@ -1107,7 +1137,7 @@ def spatial_mean(feat, aoi_ee, gridsize):
     spatial_mean = spatial_mean.getInfo()['features'][0]['properties']['mean']
     feat = feat.unmask(spatial_mean)
 
-    return feat
+    return feat, spatial_mean
 
 
 def get_feat(collection, start, end, aoi_ee, gridsize, unmask=0):

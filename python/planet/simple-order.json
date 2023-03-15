@@ -1,0 +1,16 @@
+{  
+   "name":"simple order",
+   "source_type": "scenes",
+   "products":[
+      {  
+         "item_ids":[  
+            "20220304_093300_37_2430",
+            "20220304_093257_90_2430",
+            "20220304_103324_1105",
+            "20220304_103325_1105"
+         ],
+         "item_type":"PSScene",
+         "product_bundle":"analytic_udm2"
+      }
+   ]
+}

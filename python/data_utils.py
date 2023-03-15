@@ -26,20 +26,26 @@ floodthresh = 0
 pwater_thresh = 90
 binary_keywords = ['lulc', 'aqueduct', 'deltares', 'exclusion_mask']
 
+test_events = ['gombe_mossuril_1', 'emnati_madagascar_3_0', 'batsirai_menabe_0',
+               'noul_vietnam_0', 'roanu_satkania_0', 'megi_westernvisayas_0',
+               'iota_loweraguanbasin_0', 'irma_tampasouth_0']
+
+all_features = ["elevation", "jrc_permwa", "slope_pw", "dist_pw",
+                'mslp', 'sp', 'u10_u', 'u10_v',
+                "precip", #  "wind_avg", "pressure_avg" not included because get processed
+                "mangrove", "evi_anom", "evi", "lulc",
+                "soilcarbon", "soiltemp1", "soiltemp2", "soiltemp1_anom", "soiltemp2_anom",
+                "aqueduct", "deltares",
+                "exclusion_mask"] 
+
 default_features = ["elevation", "jrc_permwa", "slope_pw", "dist_pw",
-                    "precip", "soilcarbon", "mangrove", "evi", "evi_anom", "aqueduct",
-                    "lulc", "deltares", "soiltemp1", "soiltemp2", "soiltemp1_anom", "soiltemp2_anom",
-                    "exclusion_mask", "mslp", "sp", "u10_u", "u10_v"]  #  "wind_avg", "pressure_avg" not included because get processed
+                    "precip",  #  "wind_avg", "pressure_avg" not included because get processed
+                    "mangrove", "evi_anom", "evi", "lulc",
+                    "soilcarbon", "soiltemp2", "soiltemp2_anom",
+                    "aqueduct", "deltares",
+                    "exclusion_mask"]
 
-all_features = ["elevation", "jrc_permwa", "slope_pw", "dist_pw", "precip",
-                'mslp', 'sp', 'u10_u', 'u10_v', "soilcarbon", "mangrove",
-                "evi", "aqueduct", "lulc", "deltares", "soiltemp1", "soiltemp2",
-                "exclusion_mask"]
-
-spatial_features = ['lulc__90', 'deltares', 'lulc__20', 'aqueduct', 'lulc__80', 'lulc__30', 'soilcarbon', 'slope_pw',
-                    'precip', 'jrc_permwa', 'mangrove', 'lulc__40', 'evi', 'lulc__60', 'lulc__10', 'lulc__50', 'elevation',
-                    'lulc__95']
-
+spatial_features = ['elevation', 'jrc_permwa', 'evi', 'mangrove', 'soilcarbon']
 intermediate_features = {'soilcarbon': np.mean, 'mangrove': np.mean, 'evi': np.mean, 'elevation': max}
 
 
@@ -191,14 +197,28 @@ def add_spatial_features(gdf, events, features, wd, recalculate_neighbours=False
             gdf_tosave = pd.DataFrame.from_dict(features_surrounding, orient='columns')
             gdf_tosave.set_index(ids, drop=True, inplace=True)
             gdf_tosave = gdf_event.merge(gdf_tosave, left_index=True, right_index=True, suffixes=('', '_spatial'))
+            assert len(gdf_tosave) == 4096, "GeoDataFrame is no longer correct size."
             gdf_tosave.to_file(join(wd, 'feature_stats_spatial', f'{event}.gpkg'), driver='GPKG')
 
 
 def add_intermediate_features(feature_gdf, events, intermediate_features, wd, thresh=pwater_thresh, recalculate=False, verbose=True):
-    """Calculate averages along grid cells connecting dry and wet cell.
+    """Calculate averages along shortest line between dry cells and permanent water.
 
-    This is only approximate as it is applied to the gridded dataframe rather than the
+    This is approximate as it is applied to the gridded dataframe rather than the
     original data.
+
+    Parameters:
+    -----------
+    feature_gdf : Geopandas.GeoDataFrame
+    events : list
+    intermediate_features : dict
+        Dictionary features as keys and aggregation functions as values
+    wd : str
+        working directory
+    thresh : float
+        threshold for JRC permanent water occurance value to classify a cell as wet/dry
+    recalculate : bool, default=False
+    verbose : bool, default=True
     """
     for event in (pbar1 := tqdm(events, desc='events', total=len(events))):
         if recalculate:
@@ -210,35 +230,41 @@ def add_intermediate_features(feature_gdf, events, intermediate_features, wd, th
             for feature, func in intermediate_features.items():
                 feature_gdf_pm[f'{feature}_to_pw'] = [np.nan] * len(feature_gdf_pm)
 
-            # fill gdf with empty lines
+            # assign each grid cell an empty linestring
             feature_gdf_pm['line_to_pw'] = [LineString([Point(0, 0), Point(0,0)])] * len(feature_gdf_pm)
 
+            # get index for all wet and dry points
             wet_points = feature_gdf_pm[feature_gdf_pm['jrc_permwa'] > thresh].index
             dry_points = feature_gdf_pm[feature_gdf_pm['jrc_permwa'] <= thresh].index
             wet_points = feature_gdf_pm['geometry'].iloc[wet_points]
             dry_points = feature_gdf_pm['geometry'].iloc[dry_points]
 
+            # iterate through all the dry points
             for dry_index in tqdm([*dry_points.index]):
+                # find closest wet point
                 wet_index = wet_points.sindex.nearest(dry_points[dry_index])[1][0]  # take first point (random order)
 
-                # make line between the points
+                # construct LineString between the points
                 dry_point = dry_points.loc[dry_index].centroid
                 wet_point = wet_points.iloc[wet_index].centroid
                 shortest_line = LineString([dry_point, wet_point])
 
-                # append to geodataframe for now
+                # replace empty LineString with new LineString
                 feature_gdf_pm.loc[dry_index, 'line_to_pw'] = shortest_line
 
                 # find all grid cells intersecting this linestring
                 intersecting_cells = [*feature_gdf_pm[feature_gdf_pm.intersects(shortest_line)].index]
 
-                # calculate max / mean of intersecting points
+                # calculate max aggregatre function of intersecting points for each feature
                 for feature, func in intermediate_features.items():
                     feature_gdf_pm.loc[dry_index, f'{feature}_to_pw'] = func(feature_gdf_pm.loc[intersecting_cells, feature])
-                    feature_gdf_pm.loc[~dry_index, f'{feature}_to_pw'] = 0.0
+                    assert len(feature_gdf_pm) == 4096, f"Error occured adding intermediate features for {feature},"\
+                                                        "GeoDataFrame is no longer correct size."
 
             del feature_gdf_pm['line_to_pw']
             gdf_tosave = feature_gdf_pm.to_crs(4326)
+
+            assert len(gdf_tosave) == 4096, "GeoDataFrame is no longer correct size."
             gdf_tosave.to_file(join(wd, 'feature_stats_spatial', f'{event}.gpkg'), driver='GPKG')
 
 
@@ -258,6 +284,8 @@ def add_features_to_spatial_data(wd, event, gdf, features, recalculate=True):
                 print(f"Added {feature} to {event} GeoDataFrame")
             else:
                 print(f"{feature} already in spatial GeoDataFrame for {event}")
+        
+        assert len(gdf_spatial) == 4096, "GeoDataFrame is no longer correct size."
         gdf_spatial.to_file(join(wd, 'feature_stats_spatial', f'{event}.gpkg'), driver='GPKG')
 
     else:
