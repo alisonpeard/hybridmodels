@@ -14,6 +14,10 @@ from datetime import datetime, timedelta
 import data_utils
 
 """Final features to use in model."""
+test_events = ['gombe_mossuril_1', 'emnati_madagascar_3_0', 'batsirai_menabe_0',
+               'noul_vietnam_0', 'roanu_satkania_0', 'megi_westernvisayas_0',
+               'iota_loweraguanbasin_0', 'irma_tampasouth_0']
+
 model_features = ["elevation", "elevation_spatial", "elevation_to_pw",
                  "jrc_permwa", "jrc_permwa_spatial", "slope_pw", "dist_pw",
                  "precip", "wind_avg", "pressure_avg", "wind_max", "pressure_min",
@@ -365,6 +369,23 @@ def log_feature(gdf: gpd.GeoDataFrame, feature: str, shift=None):
         return None
 
 
+def normalise_per_subset(gdf, features, subset):
+    """Normalise gdf on a per-subset basis."""
+    gdf_ssets = []
+    for sset in [*gdf[subset].unique()]:
+        gdf_sset = gdf[gdf[subset] == sset]
+        gdf_ssets.append(normalise_gdf(gdf_sset, features))
+    gdf_norm = pd.concat(gdf_ssets)
+    return gdf_norm
+
+
+def normalise_gdf(gdf, features):
+    """normalise and fit a PCA on all the data"""
+    gdf_norm = gdf.copy(deep=True)
+    for feature in features:
+        gdf_norm = normalise_feature(gdf_norm, feature)
+    return gdf_norm
+
 
 def normalise_feature(gdf: gpd.GeoDataFrame, feature: str):
     """Return dataframe with norm taken of selected feature.
@@ -373,20 +394,8 @@ def normalise_feature(gdf: gpd.GeoDataFrame, feature: str):
     >>> print(gdf.attrs['transforms']['elevation']
     """
     gdf = gdf.copy(deep=True)
-
-    if "transforms" not in gdf.attrs:
-        gdf.attrs['transforms'] = {}
-
-    if feature not in gdf.attrs['transforms']:
-        gdf.attrs['transforms'][feature] = []
-
-    if "normalise" not in gdf.attrs['transforms'][feature]:
-        gdf[feature] = (gdf[feature] - gdf[feature].mean()) / gdf[feature].std()
-        gdf.attrs['transforms'][feature].append("normalise")
-        return gdf
-    else:
-        print(f"The {feature} is already normalised.")
-        return gdf
+    gdf[feature] = (gdf[feature] - gdf[feature].mean()) / gdf[feature].std()
+    return gdf
 
 
 def one_hot_encode_feature(gdf, feature, features_binary, features, columns, notes=[]):
@@ -408,18 +417,11 @@ def one_hot_encode_feature(gdf, feature, features_binary, features, columns, not
     return gdf, list(set(features)), list(set(features_binary)), list(set(columns)), notes
 
 
-"""Functions for pre-processing data."""
+"""Functions for pre-processing the data."""
 def remove_feature(gdf, to_remove, columns, notes):
-    if "transforms" not in gdf.attrs:
-        gdf.attrs['transforms'] = {}
-
     gdf = gdf.drop(columns=to_remove)
-
-    for feature in to_remove:
-        notes.append(f'{feature} excluded')
-        gdf.attrs['transforms'][feature] = ['removed']
-
     columns = [*gdf.columns]
+    notes.append(f"removed {to_remove}")
     return gdf, columns, notes
 
 

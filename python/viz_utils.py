@@ -55,7 +55,8 @@ labels = {"floodfrac": "flooded fraction",
           'sp': 'surface pressure',
           'mslp': 'mean sea-level pressure',
           'u10_u': 'u-component of wind (U10)',
-          'u10_v': 'v-component of wind (U10)'
+          'u10_v': 'v-component of wind (U10)',
+          'COAST': 'coastal basin'
 }
 
 
@@ -142,3 +143,28 @@ def make_cmap(levels=np.arange(20, 65, 5), cmap='YlOrRd', under='lightgrey', ove
     src_norm = BoundaryNorm(boundaries=levels, ncolors=len(levels))  # cmap.N  # len(levels)
     ax_norm = BoundaryNorm(boundaries=levels, ncolors=cmap.N)
     return cmap, src_norm, ax_norm
+
+
+def add_feature_label(feature):
+    if '_spatial' in feature:
+        string = feature.replace('_spatial', '')
+        string = labels[string]
+        string = ' '.join([string, 'spatial']) 
+    elif '_to_pw' in feature:
+        string = feature.replace('_to_pw', '')
+        string = labels[string]
+        string = ' '.join([string, 'to pw']) 
+    else:
+        string = labels[feature]
+    return string
+
+
+def format_event_string(string):
+    items = string.split('_')
+    if len(items) == 3:
+        storm, region, subregion = items
+        return f"{storm.capitalize()} {region.capitalize()} (tile {subregion})"
+    elif len(items) == 4:
+        storm, region0, region1, subregion = items
+        region = ' '.join([region0, f"({region1})"])
+        return f"{storm.capitalize()} {region.capitalize()} (tile {subregion})"

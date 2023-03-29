@@ -26,10 +26,6 @@ floodthresh = 0
 pwater_thresh = 90
 binary_keywords = ['lulc', 'aqueduct', 'deltares', 'exclusion_mask']
 
-test_events = ['gombe_mossuril_1', 'emnati_madagascar_3_0', 'batsirai_menabe_0',
-               'noul_vietnam_0', 'roanu_satkania_0', 'megi_westernvisayas_0',
-               'iota_loweraguanbasin_0', 'irma_tampasouth_0']
-
 all_features = ["elevation", "jrc_permwa", "slope_pw", "dist_pw",
                 'mslp', 'sp', 'u10_u', 'u10_v',
                 "precip", #  "wind_avg", "pressure_avg" not included because get processed

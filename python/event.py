@@ -13,7 +13,7 @@ from shapely.ops import nearest_points
 # for deltares
 import dask.distributed
 import xarray as xr
-import pystac_client  # issue on old Macbook
+# import pystac_client  # issue on old Macbook
 import rasterio
 import rioxarray
 
@@ -101,9 +101,12 @@ class Event:
         self.indir = join(self.wd, f"{storm}_{region}")  # directory containing flood file etc.
         self.startdate, self.enddate = [*pd.read_csv(join(self.wd, "csvs", "event_dates.csv"),
                                    index_col="storm").loc[storm]]
-        self.acquisition_time = pd.read_csv(join(self.wd, 'csvs', 'current_datasets.csv'),
-                                            index_col=['event', 'region']).loc[(self.storm, self.region)]['acquisition_time']
+        
+        current_dataset  = pd.read_csv(join(self.wd, 'csvs', 'current_datasets.csv'),
+                                            index_col=['event', 'region']).loc[(self.storm, self.region)]
+        self.acquisition_time = current_dataset['acquisition_time']
         self.year = int(self.enddate[:4])
+        self.sid = current_dataset['sid']
 
         self.aoi_pm = [None] * nsubregions
         self.aoi_lonlat = [None] * nsubregions
