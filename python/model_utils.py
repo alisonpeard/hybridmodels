@@ -38,6 +38,20 @@ lulc_categories = {'built_up': ['lulc__50'],
 lulc_cols = ['lulc__20', 'lulc__30', 'lulc__40', 'lulc__50', 'lulc__60', 'lulc__70', 'lulc__80', 'lulc__90', 'lulc__95', 'lulc_100']
 
 ## MAIN DATA-LOADING FUNCTIONS
+def load_all_gdfs(wd, subset=''):
+    """Return all gdfs in a folder (and filter by subset string)."""
+
+    files = [filename for filename in glob.glob(join(wd, "*.geoparquet"))]
+
+    # make sure subset strings in files
+    if not subset == '':
+        subset = [f'{file}.geoparquet' for file in [subset]]
+        filemask = [basename(file) in subset for file in files]
+        files = list(compress(files, filemask))
+    gdfs = [gpd.read_file(filename, SHAPE_RESTORE_SHX='YES') for filename in files]
+    return gdfs
+
+
 def load_raw_data(wd, features, temporal=False, binary=True, subset=''):
     """Load data from feature_stats: needs some processing to be usable.
     
@@ -99,20 +113,6 @@ def load_spatial_data(wd, subset='', intermediate_features=True):
     gdf['exclusion_mask'] = gdf['exclusion_mask'].replace(np.nan, 0.0)
 
     return gdf
-
-
-def load_all_gdfs(wd, folder='feature_stats', subset=''):
-    """Return all gdfs in a folder (and filter by subset string)."""
-
-    files = [filename for filename in glob.glob(join(wd, folder, "*.gpkg"))]
-
-    # make sure subset strings in files
-    if not subset == '':
-        subset = [f'{file}.gpkg' for file in [subset]]
-        filemask = [basename(file) in subset for file in files]
-        files = list(compress(files, filemask))
-    gdfs = [gpd.read_file(filename, SHAPE_RESTORE_SHX='YES') for filename in files]
-    return gdfs
 
 
 def format_event_col(gdf, columns):

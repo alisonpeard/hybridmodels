@@ -23,10 +23,10 @@ from wind_utils import *
 
 """Global settings."""
 floodthresh = 0
-pwater_thresh = 90
+pwater_thresh = 20  # changed from 90 on 2023-03- (water present for >44 months)
 binary_keywords = ['lulc', 'aqueduct', 'deltares', 'exclusion_mask']
 
-all_features = ["elevation", "jrc_permwa", "slope_pw", "dist_pw",
+all_features = ["elevation", "jrc_permwa", "dist_pw", "dist_coast", "slope_coast",
                 'mslp', 'sp', 'u10_u', 'u10_v',
                 "precip", #  "wind_avg", "pressure_avg" not included because get processed
                 "mangrove", "evi_anom", "evi", "lulc",
@@ -34,7 +34,7 @@ all_features = ["elevation", "jrc_permwa", "slope_pw", "dist_pw",
                 "aqueduct", "deltares",
                 "exclusion_mask"] 
 
-default_features = ["elevation", "jrc_permwa", "slope_pw", "dist_pw",
+default_features = ["elevation", "jrc_permwa", "slope_coast", "dist_pw", "dist_coast"
                     "precip",  #  "wind_avg", "pressure_avg" not included because get processed
                     "mangrove", "evi_anom", "evi", "lulc",
                     "soilcarbon", "soiltemp2", "soiltemp2_anom",
@@ -147,13 +147,12 @@ def split_features_binary_continuous(binary_keywords, features):
 
 
 def add_spatial_features(gdf, events, features, wd, recalculate_neighbours=False, recalculate=False, verbose=True):
-    """Should really change postfix to _neighbours..."""
     # sort binary and continuous features
     features_binary, features_continuous = split_features_binary_continuous(binary_keywords, features)
 
     # cycle through events
     for event in (pbar1 := tqdm(events, desc='events', total=len(events))):
-        if recalculate or (not exists(join(wd, 'feature_stats_spatial', f'{event}.gpkg'))):
+        if recalculate or (not exists(join(wd, f'{event}.parquet'))):
             if verbose: print(f"Getting spatial features for {event}.")
             if verbose: pbar1.set_description(f"Getting spatial features for {event}...")
             gdf_event = gdf[gdf.event == event]
@@ -161,15 +160,15 @@ def add_spatial_features(gdf, events, features, wd, recalculate_neighbours=False
             features_surrounding = {feature: [] for feature in features}
 
             # calculate neighbours
-            if recalculate_neighbours or (not exists(join(wd, 'feature_stats_spatial', f'{event}_contiguity.npz'))):
+            if recalculate_neighbours or (not exists(join(wd, f'{event}_contiguity.npz'))):
                 if verbose: print(f"Calculating node neighbours.")
                 w = weights.Queen.from_dataframe(gdf_event)
                 W, _ = weights.full(w)
                 ids = [*gdf_event.index]  # 0 -> 4096
-                np.savez(join(wd, 'feature_stats_spatial', f"{event}_contiguity"), W=W, ids=ids)
+                np.savez(join(wd, 'contiguity_mats', f"{event}_contiguity"), W=W, ids=ids)
 
             # load weight matrices and create graph
-            dat = np.load(join(wd, 'feature_stats_spatial', f"{event}_contiguity.npz"))
+            dat = np.load(join(wd, 'contiguity_mats', f"{event}_contiguity.npz"))
             W, ids = dat['W'], dat['ids']
             id_dict = {old: new for old, new in zip(range(4096), ids)}
             G = nx.from_numpy_array(W)
@@ -194,7 +193,8 @@ def add_spatial_features(gdf, events, features, wd, recalculate_neighbours=False
             gdf_tosave.set_index(ids, drop=True, inplace=True)
             gdf_tosave = gdf_event.merge(gdf_tosave, left_index=True, right_index=True, suffixes=('', '_spatial'))
             assert len(gdf_tosave) == 4096, "GeoDataFrame is no longer correct size."
-            gdf_tosave.to_file(join(wd, 'feature_stats_spatial', f'{event}.gpkg'), driver='GPKG')
+            gdf_tosave.to_to_parquet(join(wd, 'dataframes', f'{event}.parquet'))
+            return gdf_tosave
 
 
 def add_intermediate_features(feature_gdf, events, intermediate_features, wd, thresh=pwater_thresh, recalculate=False, verbose=True):
@@ -261,7 +261,8 @@ def add_intermediate_features(feature_gdf, events, intermediate_features, wd, th
             gdf_tosave = feature_gdf_pm.to_crs(4326)
 
             assert len(gdf_tosave) == 4096, "GeoDataFrame is no longer correct size."
-            gdf_tosave.to_file(join(wd, 'feature_stats_spatial', f'{event}.gpkg'), driver='GPKG')
+            gdf_tosave.to_parquet(join(wd, 'dataframes', f'{event}.parquet'))
+            return gdf_tosave
 
 
 def add_features_to_spatial_data(wd, event, gdf, features, recalculate=True):
@@ -282,7 +283,7 @@ def add_features_to_spatial_data(wd, event, gdf, features, recalculate=True):
                 print(f"{feature} already in spatial GeoDataFrame for {event}")
         
         assert len(gdf_spatial) == 4096, "GeoDataFrame is no longer correct size."
-        gdf_spatial.to_file(join(wd, 'feature_stats_spatial', f'{event}.gpkg'), driver='GPKG')
+        gdf_spatial.to_file(join(wd, f'{event}.gpkg'), driver='GPKG')
 
     else:
         print(f"No spatial data for {event}.")

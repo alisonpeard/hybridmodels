@@ -31,7 +31,7 @@ Use:
 
 # settings
 TEST_RUN = False             # check logging and multiprocessing behaving correctly (currently failing)
-feature_list = None          # None for all features or else ['feature1', 'feature2']
+feature_list = None         # None for all features or else ['feature1', 'feature2']
 recalculate_all = True       # false to just append to files
 recalculate_features = True
 keyword = "yes"
@@ -49,7 +49,7 @@ from multiprocessing_logging import listener_configurer, worker_configurer, list
 
 # environment
 bd = dirname(__file__)
-wd = join(bd, "..", "data")
+datadir = join(bd, "..", "data")
 log_file_path = join(bd, 'logfiles')
 log_name = 'data_collection'
 
@@ -71,7 +71,8 @@ def process_events(row, queue, configurer):
     logger.addHandler(sh)
 
     try:
-        event = Event(storm, region, nsubregions, wd, bd)
+        wd = join(datadir, "storm_events", f"{storm}_{region}")
+        event = Event(storm, region, nsubregions, wd, datadir)
         if not TEST_RUN:
             logger.info(f"Setting up Storm {storm.capitalize()} Event instance for "\
                     f"{region.capitalize()} with {nsubregions} subregions.")
@@ -87,7 +88,7 @@ def process_events(row, queue, configurer):
 
 def main():
     # load and parse data
-    df = pd.read_csv(join(wd, "csvs", "current_datasets.csv"))
+    df = pd.read_csv(join(datadir, "csvs", "current_datasets.csv"))
     df = df[df.to_process == keyword]  # only process selected events
     events = [row for _, row in df.iterrows()]
 
