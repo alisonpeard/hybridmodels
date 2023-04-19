@@ -40,15 +40,8 @@ lulc_cols = ['lulc__20', 'lulc__30', 'lulc__40', 'lulc__50', 'lulc__60', 'lulc__
 ## MAIN DATA-LOADING FUNCTIONS
 def load_all_gdfs(wd, subset=''):
     """Return all gdfs in a folder (and filter by subset string)."""
-
-    files = [filename for filename in glob.glob(join(wd, "*.geoparquet"))]
-
-    # make sure subset strings in files
-    if not subset == '':
-        subset = [f'{file}.geoparquet' for file in [subset]]
-        filemask = [basename(file) in subset for file in files]
-        files = list(compress(files, filemask))
-    gdfs = [gpd.read_file(filename, SHAPE_RESTORE_SHX='YES') for filename in files]
+    files = [filename for filename in glob.glob(join(wd, "feature_stats*.parquet"))]
+    gdfs = [gpd.read_parquet(filename) for filename in files]
     return gdfs
 
 
@@ -73,6 +66,7 @@ def load_raw_data(wd, features, temporal=False, binary=True, subset=''):
     columns = features + ['storm', 'region', 'subregion', "geometry", "floodfrac"]
     gdfs = load_all_gdfs(wd, subset=subset)
     gdfs, features, columns = process_winds(gdfs, temporal, features, columns)
+
     # one big GeoDataFrame
     gdf = pd.concat(gdfs)
     gdf.attrs['transforms'] = {}
@@ -83,8 +77,6 @@ def load_raw_data(wd, features, temporal=False, binary=True, subset=''):
         gdf.attrs['transforms']['floodfrac'] = 'binarised flood fraction'
 
     gdf = gdf.replace("", np.nan)
-    gdf = clean_slope(gdf)
-    gdf.attrs['transforms']['slope'] = 'tidied-up slope'
     features_binary, _ = data_utils.split_features_binary_continuous(data_utils.binary_keywords, features)
 
     if 'lulc' in features:
@@ -101,7 +93,7 @@ def load_raw_data(wd, features, temporal=False, binary=True, subset=''):
 
 def load_spatial_data(wd, subset='', intermediate_features=True):
     """Load data with all features from feature_stats_spatial."""
-    gdfs = load_all_gdfs(wd, 'feature_stats_spatial', subset)
+    gdfs = load_all_gdfs(wd, 'feature_stats', subset)
     gdf = pd.concat(gdfs)
 
     # fixes for issues with spatial data (can get rid of this after re-run)

@@ -43,7 +43,7 @@ RECALCULATE_NEIGHBOURS = False # turn off in contingency matrices already presen
 VERBOSE = True
 TEMPORAL = False
 BINARY = True
-KEYWORD = 'spatial'
+KEYWORD = 'yes'
 
 def main():
     # load and parse data
@@ -55,7 +55,7 @@ def main():
     for storm, nsubregions in rows:
         for subregion in range(START_ON, int(nsubregions)):  #int(nsubregions)):
             event = f"{storm}_{subregion}"
-            indir = join(wd, storm)
+            indir = join(wd, 'storm_events', storm)
             outdir =join(wd, 'feature_stats')
             logger.info(f"Add spatial features to {event}.")
             try:

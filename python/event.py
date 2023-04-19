@@ -1,3 +1,5 @@
+import os
+os.environ['USE_PYGEOS'] = '0'  # should solve runtime warnings
 from os.path import join, exists
 from os import remove
 import warnings
@@ -257,7 +259,8 @@ class Event:
         if self._oceanmask is None:
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", category=RuntimeWarning)
-                self._oceanmask = gpd.read_parquet(join(self.bd, 'openstreetmap', 'water-osm.parquet')).to_crs(4326).clip(mask=self.aoi_event)
+                aoi = self.get_aoi()
+                self._oceanmask = gpd.read_parquet(join(self.bd, 'openstreetmap', 'water-osm.parquet')).to_crs(4326).clip(mask=aoi)
         return self._oceanmask
         
     def get_coastline(self):
@@ -265,7 +268,8 @@ class Event:
             if self._coastline is None:
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=RuntimeWarning)
-                    self._coastline = gpd.read_parquet(join(self.bd, 'openstreetmap', 'coastlines-osm.parquet')).to_crs(4326).clip(mask=self.aoi_event)
+                    aoi = self.get_aoi()
+                    self._coastline = gpd.read_parquet(join(self.bd, 'openstreetmap', 'coastlines-osm.parquet')).to_crs(4326).clip(mask=aoi)
             return self._coastline
     
 
@@ -606,7 +610,7 @@ class Event:
                     self.get_elevation(subregion)
 
                 coastline = self.get_coastline().to_crs(3857)
-                feature_gdf['dist_coast'] = feature_gdf.to_crs(3857).distance(coastline.unary_union)
+                feature_gdf['dist_coast'] = inline_function_wrapper(feature_gdf.to_crs(3857), coastline.unary_union, 'distance')
                 feature_gdf['slope_coast'] = (feature_gdf['elevation'] / feature_gdf['dist_coast']).replace(-np.inf, 0.0).replace(np.inf, 0.0)
 
             except Exception as e:
@@ -655,7 +659,7 @@ class Event:
                 water_gdf = geemap.ee_to_geopandas(water).set_crs(4326)
                 water_gdf = water_gdf[water_gdf.label == 1]
                 ocean = self.get_oceanmask()
-                water_gdf = function_wrapper(water_gdf, ocean, **{'how': 'union'})
+                water_gdf = function_wrapper(water_gdf, ocean, gpd.overlay, **{'how': 'union'})
 
                 dist_list = dist_to_water(feature_gdf, water_gdf)
                 feature_gdf['dist_pw'] = dist_list
@@ -759,58 +763,60 @@ class Event:
 
         Dataset available: 1979-01-02T00:00:00Z – 2020-07-09T00:00:00
         """
-
+        # which features from ERA5 Daily Aggregates to use
+        feature_names = ['mslp', 'sp', 'u10_u', 'u10_v']
+        features = ['mean_sea_level_pressure', 'surface_pressure', 'u_component_of_wind_10m', 'v_component_of_wind_10m']
         feature_gdf = self.get_feature_gdf(subregion)
 
-        if "mslp" not in feature_gdf or recalculate:
-            self.start_gee(subregion)
-            aoi_ee = self.aoi_ee[subregion]
-            grid_ee = self.grid_ee[subregion]
+        if pd.to_datetime('1979-01-02T00:00:00') <= pd.to_datetime(self.acquisition_time) <= pd.to_datetime('2020-07-09T00:00:00'):
+            
+            if "mslp" not in feature_gdf or recalculate:
+                self.start_gee(subregion)
+                aoi_ee = self.aoi_ee[subregion]
+                grid_ee = self.grid_ee[subregion]
 
-            # which features from ERA5 Daily Aggregates to use
-            feature_names = ['mslp', 'sp', 'u10_u', 'u10_v']
-            features = ['mean_sea_level_pressure', 'surface_pressure', 'u_component_of_wind_10m', 'v_component_of_wind_10m']
+                for feature, feature_name in zip(features, feature_names):
+                    self.logger.info(f"Calculating ERA5 {feature_name}...")
+                    try:
+                        feat = ee.Image(ee.ImageCollection("ECMWF/ERA5/DAILY")
+                                        .select(feature)
+                                        .filterBounds(aoi_ee)
+                                        .filterDate(self.startdate, self.enddate)
+                                        .mean()
+                                        .clip(aoi_ee))
 
-            for feature, feature_name in zip(features, feature_names):
-                self.logger.info(f"Calculating ERA5 {feature_name}...")
-                try:
-                    feat = ee.Image(ee.ImageCollection("ECMWF/ERA5/DAILY")
-                                      .select(feature)
-                                      .filterBounds(aoi_ee)
-                                      .filterDate(self.startdate, self.enddate)
-                                      .mean()
-                                      .clip(aoi_ee))
+                        # unmask using the spatial average
+                        spatial_mean = feat.reduceRegions(aoi_ee,
+                                                        ee.Reducer.mean(),
+                                                        crs="EPSG:4326",
+                                                        scale=self.gridsize)
+                        spatial_mean = spatial_mean.getInfo()['features'][0]['properties']['mean']
+                        feat = feat.unmask(spatial_mean)
 
+                        # Add reducer output to the Features in the collection.
+                        mean_feat = feat.reduceRegions(collection=grid_ee,
+                                                    reducer=ee.Reducer.mean(),
+                                                    scale=self.gridsize,
+                                                    crs="EPSG:4326")
 
-                    # unmask using the spatial average
-                    spatial_mean = feat.reduceRegions(aoi_ee,
-                                                      ee.Reducer.mean(),
-                                                      crs="EPSG:4326",
-                                                      scale=self.gridsize)
-                    spatial_mean = spatial_mean.getInfo()['features'][0]['properties']['mean']
-                    feat = feat.unmask(spatial_mean)
+                        # feat_list = mean_feat.aggregate_array('mean').getInfo()
+                        feat_list = mean_feat.getInfo()
+                        feat_list = [feat['properties'].get('mean', np.nan) for feat in feat_list['features']]
+                        feature_gdf[feature_name] = feat_list
 
-                    # Add reducer output to the Features in the collection.
-                    mean_feat = feat.reduceRegions(collection=grid_ee,
-                                                   reducer=ee.Reducer.mean(),
-                                                   scale=self.gridsize,
-                                                   crs="EPSG:4326")
-
-                    # feat_list = mean_feat.aggregate_array('mean').getInfo()
-                    feat_list = mean_feat.getInfo()
-                    feat_list = [feat['properties'].get('mean', np.nan) for feat in feat_list['features']]
-
-                    feature_gdf[feature_name] = feat_list
-
-                except Exception as e:
-                    self.logger.warning(f"Error for {feature_name} for {self.storm}, {self.region}, {subregion}:"\
-                                        f"{e}\nCreating empty field.")
-                    feature_gdf[feature_name] = [np.nan] * len(feature_gdf)
-
-
-            # save output
-            self._feature_gdf[subregion] = feature_gdf
-            self.save_gdf(subregion)
+                    except Exception as e:
+                        self.logger.warning(f"Error for {feature_name} for {self.storm}, {self.region}, {subregion}:"\
+                                            f"{e}\nCreating empty field.")
+                        feature_gdf[feature_name] = [np.nan] * len(feature_gdf)
+        else:
+            self.logger.info(f"{self.storm}, {self.region} outside of ERA5 time range:"\
+                            f"\nCreating empty field.")
+            for feature_name in feature_names:
+                feature_gdf[feature_name] = [np.nan] * len(feature_gdf)
+        
+        # save output
+        self._feature_gdf[subregion] = feature_gdf
+        self.save_gdf(subregion)
 
 
     def get_soiltemp(self, subregion, recalculate=False, advance=1):
@@ -823,56 +829,60 @@ class Event:
         advance : int (default=1)
             Number of months before storm start date to begin collecting data.
         """
+        # which features from ERA5 Daily Aggregates to use
+        feature_names = ['soiltemp1', 'soiltemp2']
+        features = ['soil_temperature_level_1', 'soil_temperature_level_2']
+        feature_gdf =  self.get_feature_gdf(subregion)
+        if pd.to_datetime('1981-01-01T00:00:00') <= pd.to_datetime(self.acquisition_time) <= pd.to_datetime('2022-08-01T00:00:00'):
+            if "soil_temperature_level_1" not in feature_gdf or recalculate:
+                self.start_gee(subregion)
+                aoi_ee = self.aoi_ee[subregion]
+                grid_ee = self.grid_ee[subregion]
 
-        feature_gdf =  self.get_gdf(subregion)
+                for feature, feature_name in zip(features, feature_names):
+                    self.logger.info(f"Calculating ERA5 {feature_name}...")
+                    try:
+                        collection = ee.ImageCollection("ECMWF/ERA5_LAND/MONTHLY").select(feature)
+                        start = ee.Date(self.startdate).advance(-advance, 'month')
+                        end = ee.Date.parse('YYYY-MM-dd HH:mm', self.acquisition_time)
+                        baseyear = 1981
+                        feat, anomaly = get_anomaly(collection, start, end, baseyear, aoi_ee, self.gridsize, spatial_mean)
 
-        if "soil_temperature_level_1" not in feature_gdf or recalculate:
-            self.start_gee(subregion)
-            aoi_ee = self.aoi_ee[subregion]
-            grid_ee = self.grid_ee[subregion]
+                        # Add reducer output to the Features in the collection.
+                        mean_feat = feat.reduceRegions(collection=grid_ee,
+                                                    reducer=ee.Reducer.mean(),
+                                                    scale=self.gridsize,
+                                                    crs="EPSG:4326")
+                        feat_list = mean_feat.getInfo()
+                        feat_list = [feat['properties'].get('mean', np.nan) for feat in feat_list['features']]
+                        feature_gdf[feature_name] = feat_list
 
-            # which features from ERA5 Daily Aggregates to use
-            feature_names = ['soiltemp1', 'soiltemp2']
-            features = ['soil_temperature_level_1', 'soil_temperature_level_2']
-
-            for feature, feature_name in zip(features, feature_names):
-                self.logger.info(f"Calculating ERA5 {feature_name}...")
-                try:
-                    collection = ee.ImageCollection("ECMWF/ERA5_LAND/MONTHLY").select(feature)
-                    start = ee.Date(self.startdate).advance(-advance, 'month')
-                    end = ee.Date.parse('YYYY-MM-dd HH:mm', self.acquisition_time)
-                    baseyear = 1981
-                    feat, anomaly = get_anomaly(collection, start, end, baseyear, aoi_ee, self.gridsize, spatial_mean)
-
-                    # Add reducer output to the Features in the collection.
-                    mean_feat = feat.reduceRegions(collection=grid_ee,
-                                                   reducer=ee.Reducer.mean(),
-                                                   scale=self.gridsize,
-                                                   crs="EPSG:4326")
-                    feat_list = mean_feat.getInfo()
-                    feat_list = [feat['properties'].get('mean', np.nan) for feat in feat_list['features']]
-                    feature_gdf[feature_name] = feat_list
-
-
-                    # Add anomaly reducer output to Features
-                    mean_anomaly = anomaly.reduceRegions(collection=grid_ee,
-                                                   reducer=ee.Reducer.mean(),
-                                                   scale=self.gridsize,
-                                                   crs="EPSG:4326")
-                    anomaly_list = mean_anomaly.getInfo()
-                    anomaly_list = [feat['properties'].get('mean', np.nan) for feat in anomaly_list['features']]
-                    feature_gdf[f'{feature_name}_anom'] = anomaly_list
+                        # Add anomaly reducer output to Features
+                        mean_anomaly = anomaly.reduceRegions(collection=grid_ee,
+                                                    reducer=ee.Reducer.mean(),
+                                                    scale=self.gridsize,
+                                                    crs="EPSG:4326")
+                        anomaly_list = mean_anomaly.getInfo()
+                        anomaly_list = [feat['properties'].get('mean', np.nan) for feat in anomaly_list['features']]
+                        feature_gdf[f'{feature_name}_anom'] = anomaly_list
 
 
-                except Exception as e:
-                    self.logger.warning(f"Error for {feature_name} for {self.storm}, {self.region}, {subregion}:"\
-                                        f"{e}\nCreating empty field.")
-                    feature_gdf[feature_name] = [np.nan] * len(feature_gdf)
-                    feature_gdf[f'{feature_name}_anom'] = [np.nan] * len(feature_gdf)
+                    except Exception as e:
+                        self.logger.warning(f"Error for {feature_name} for {self.storm}, {self.region}, {subregion}:"\
+                                            f"{e}\nCreating empty field.")
+                        feature_gdf[feature_name] = [np.nan] * len(feature_gdf)
+                        feature_gdf[f'{feature_name}_anom'] = [np.nan] * len(feature_gdf)
+        else:
+            self.logger.info(f"{self.storm}, {self.region} outside of ERA5 soiltemp time range:"\
+                            f"\nCreating empty field.")
+            for feature_name in feature_names:
+                feature_gdf[feature_name] = [np.nan] * len(feature_gdf)
+            feature_gdf[feature_name] = [np.nan] * len(feature_gdf)
+            feature_gdf[f'{feature_name}_anom'] = [np.nan] * len(feature_gdf)
 
-            # save output
-            self._feature_gdf[subregion] = feature_gdf
-            self.save_gdf(subregion)
+        # save output
+        self._feature_gdf[subregion] = feature_gdf
+        self.save_gdf(subregion)
 
 
     def get_soilcarbon(self, subregion, recalculate=False):
@@ -1066,15 +1076,13 @@ class Event:
 
             try:
                 feature_gdf['exclusion_mask'] = [np.nan] * len(feature_gdf)
-                filepath = join(self.wd, f"{self.storm}_{self.region}", "exclusion_mask.gpkg")
+                filepath = join(self.wd, "exclusion_mask.gpkg")
                 if exists(filepath):
                     feature_gdf = self._feature_gdf[subregion]
                     exclusion_mask = gpd.read_file(filepath)
                     assert feature_gdf.crs == exclusion_mask.crs
 
-                    with warnings.catch_warnings():
-                        warnings.filterwarnings("ignore", category=RuntimeWarning)
-                        feature_gdf = data_utils.get_grid_intersects(exclusion_mask, feature_gdf, col='exclusion_mask')
+                    feature_gdf = function_wrapper(exclusion_mask, feature_gdf, get_grid_intersects, **{'col': 'exclusion_mask'})
                     feature_gdf['exclusion_mask'] = feature_gdf['exclusion_mask'].apply(lambda x: 1 if x > 0 else 0)
                 else:
                     self.logger.warning(f"No exclusion mask file with name {filepath}.")

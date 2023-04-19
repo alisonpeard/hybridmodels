@@ -13,13 +13,13 @@ Settings:
 ---------
 TEST_RUN : bool
     Test multiprocessing and logging working as expected without processing data.
-feature_list : list or None
-    Only calculate features in feature_list, or None to calculate all features.
-recalculate_all : bool
+FEATURE_LIST : list or None
+    Only calculate features in FEATURE_LIST, or None to calculate all features.
+RECALCULATE_ALL : bool
     Recalculate the entire dataset from scratch. If False only recalculates or appends
-    features in features_list, depending on recalculate_features.
-recalculate_features : bool
-    Recalculate all the features in feature_list. If False only features which haven't
+    features in features_list, depending on RECALCULATE_FEATURES.
+RECALCULATE_FEATURES : bool
+    Recalculate all the features in FEATURE_LIST. If False only features which haven't
     already been calculated are appended. If True everything is recalculated.
 
 Use:
@@ -31,16 +31,17 @@ Use:
 
 # settings
 TEST_RUN = False             # check logging and multiprocessing behaving correctly (currently failing)
-feature_list = None         # None for all features or else ['feature1', 'feature2']
-recalculate_all = True       # false to just append to files
-recalculate_features = True
-keyword = "yes"
+FEATURE_LIST = None         # None for all features or else ['feature1', 'feature2']
+RECALCULATE_ALL = True       # false to just append to files
+RECALCULATE_FEATURES = True
+KEYWORD = "yes"
 
 # imports
 from os.path import join, dirname
 import logging
 import logging.handlers
 import multiprocessing
+import tracemalloc
 import traceback
 import pandas as pd
 
@@ -77,9 +78,7 @@ def process_events(row, queue, configurer):
             logger.info(f"Setting up Storm {storm.capitalize()} Event instance for "\
                     f"{region.capitalize()} with {nsubregions} subregions.")
             event.make_grids()
-            event.process_all_subregions(recalculate_all, recalculate_features, feature_list)
-            # event.get_all_features(2, recalculate_all, recalculate_features, feature_list)  # just one event
-            # event.get_era5(0)  # just one field for one event
+            event.process_all_subregions(RECALCULATE_ALL, RECALCULATE_FEATURES, FEATURE_LIST)
         else:
             logger.info(event)
     except Exception:
@@ -89,7 +88,7 @@ def process_events(row, queue, configurer):
 def main():
     # load and parse data
     df = pd.read_csv(join(datadir, "csvs", "current_datasets.csv"))
-    df = df[df.to_process == keyword]  # only process selected events
+    df = df[df.to_process == KEYWORD]  # only process selected events
     events = [row for _, row in df.iterrows()]
 
     # start the listener for pool
@@ -112,4 +111,10 @@ def main():
 
 
 if __name__ == '__main__':
+    tracemalloc.start()
     main()
+    tracemalloc.stop()
+    
+    # Print the top 10 memory blocks
+    for stat in tracemalloc.get_traced_memory()[:10]:
+        print(stat)

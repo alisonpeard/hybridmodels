@@ -24,7 +24,7 @@ from wind_utils import *
 """Global settings."""
 floodthresh = 0
 pwater_thresh = 20  # changed from 90 on 2023-03- (water present for >44 months)
-binary_keywords = ['lulc', 'aqueduct', 'deltares', 'exclusion_mask']
+binary_keywords = ['lulc', 'aqueduct', 'deltares', 'mangrove', 'exclusion_mask']
 
 all_features = ["elevation", "jrc_permwa", "dist_pw", "dist_coast", "slope_coast",
                 'mslp', 'sp', 'u10_u', 'u10_v',
@@ -34,7 +34,7 @@ all_features = ["elevation", "jrc_permwa", "dist_pw", "dist_coast", "slope_coast
                 "aqueduct", "deltares",
                 "exclusion_mask"] 
 
-default_features = ["elevation", "jrc_permwa", "slope_coast", "dist_pw", "dist_coast"
+default_features = ["elevation", "jrc_permwa", "slope_coast", "dist_pw", "dist_coast",
                     "precip",  #  "wind_avg", "pressure_avg" not included because get processed
                     "mangrove", "evi_anom", "evi", "lulc",
                     "soilcarbon", "soiltemp2", "soiltemp2_anom",
@@ -160,7 +160,7 @@ def add_spatial_features(gdf, events, features, wd, recalculate_neighbours=False
             features_surrounding = {feature: [] for feature in features}
 
             # calculate neighbours
-            if recalculate_neighbours or (not exists(join(wd, f'{event}_contiguity.npz'))):
+            if recalculate_neighbours or (not exists(join(wd, 'contiguity_mats', f'{event}_contiguity.npz'))):
                 if verbose: print(f"Calculating node neighbours.")
                 w = weights.Queen.from_dataframe(gdf_event)
                 W, _ = weights.full(w)
@@ -193,7 +193,7 @@ def add_spatial_features(gdf, events, features, wd, recalculate_neighbours=False
             gdf_tosave.set_index(ids, drop=True, inplace=True)
             gdf_tosave = gdf_event.merge(gdf_tosave, left_index=True, right_index=True, suffixes=('', '_spatial'))
             assert len(gdf_tosave) == 4096, "GeoDataFrame is no longer correct size."
-            gdf_tosave.to_to_parquet(join(wd, 'dataframes', f'{event}.parquet'))
+            gdf_tosave.to_parquet(join(wd, 'dataframes', f'{event}.parquet'))
             return gdf_tosave
 
 
