@@ -303,7 +303,7 @@ class Event:
                 grid_flooded = grid_flooded[['index'] + cols].groupby('index').agg(pd.Series.mode)
                 feature_gdf  = pd.merge(feature_gdf, grid_flooded, left_index=True, right_index=True, how='left').fillna("")
             except Exception as e:
-                self.logger.warning(f"{self.storm}_{self.region}_{subregion}: error adding extra flood info:\n{e}\nCreating empty fields")
+                self.logger.info(f"{self.storm}_{self.region}_{subregion}: error adding extra flood info:\n{e}\nCreating empty fields")
                 for col in cols:
                     feature_gdf[col] =  [np.nan] * len(feature_gdf)
 
