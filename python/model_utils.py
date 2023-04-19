@@ -38,14 +38,41 @@ lulc_categories = {'built_up': ['lulc__50'],
 lulc_cols = ['lulc__20', 'lulc__30', 'lulc__40', 'lulc__50', 'lulc__60', 'lulc__70', 'lulc__80', 'lulc__90', 'lulc__95', 'lulc_100']
 
 ## MAIN DATA-LOADING FUNCTIONS
-def load_all_gdfs(wd, subset=''):
-    """Return all gdfs in a folder (and filter by subset string)."""
-    files = [filename for filename in glob.glob(join(wd, "feature_stats*.parquet"))]
-    gdfs = [gpd.read_parquet(filename) for filename in files]
+# def load_all_gdfs(wd, folder, subset=''):
+#     """Return all gdfs in a folder (and filter by subset string)."""
+#     wd = join(wd, folder)
+#     files = [filename for filename in glob.glob(join(wd, "*.parquet"))]
+#     gdfs = [gpd.read_parquet(filename) for filename in files]
+#     return gdfs
+
+# TODO:
+import os
+def load_aspatial_data(wd):
+    """Load aspatial data from correct dirs, no processing.
+    
+    Parameters:
+    -----------
+    wd :
+        where all storms folders are stored
+    """
+    gdfs = []
+    for dirpath, _, _ in os.walk(wd):
+        files = [filename for filename in glob.glob(join(dirpath, "feature_stats*.parquet"))]
+        if len(files) > 0:
+            gdfs += [gpd.read_parquet(filename) for filename in files]
     return gdfs
 
 
-def load_raw_data(wd, features, temporal=False, binary=True, subset=''):
+
+# TODO:
+def load_spatial_data(wd):
+    """Load aspatial data from correct dir, no processing."""
+    gdfs = []
+    files = [filename for filename in glob.glob(join(wd, "*.parquet"))]
+    return gdfs
+
+
+def load_raw_data(wd, features, temporal=False, binary=True, subset='feature_stats'):
     """Load data from feature_stats: needs some processing to be usable.
     
     Parameters:
@@ -93,16 +120,18 @@ def load_raw_data(wd, features, temporal=False, binary=True, subset=''):
 
 def load_spatial_data(wd, subset='', intermediate_features=True):
     """Load data with all features from feature_stats_spatial."""
-    gdfs = load_all_gdfs(wd, 'feature_stats', subset)
+    gdfs = load_all_gdfs(wd, subset)
     gdf = pd.concat(gdfs)
 
-    # fixes for issues with spatial data (can get rid of this after re-run)
-    if intermediate_features:
-        intermediate_features = [*data_utils.intermediate_features.keys()]
-        intermediate_features = [f"{feat}_to_pw" for feat in intermediate_features]
-        gdf[intermediate_features] = gdf[intermediate_features].replace(np.nan, 0.0)
 
-    gdf['exclusion_mask'] = gdf['exclusion_mask'].replace(np.nan, 0.0)
+    # TODO: delete these if working ok
+    # fixes for issues with spatial data (can get rid of this after re-run)
+    # if intermediate_features:
+    #     intermediate_features = [*data_utils.intermediate_features.keys()]
+    #     intermediate_features = [f"{feat}_to_pw" for feat in intermediate_features]
+    #     gdf[intermediate_features] = gdf[intermediate_features].replace(np.nan, 0.0)
+
+    # gdf['exclusion_mask'] = gdf['exclusion_mask'].replace(np.nan, 0.0)
 
     return gdf
 

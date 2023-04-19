@@ -43,7 +43,7 @@ RECALCULATE_NEIGHBOURS = False # turn off in contingency matrices already presen
 VERBOSE = True
 TEMPORAL = False
 BINARY = True
-KEYWORD = 'yes'
+KEYWORD = 'spatial'
 
 def main():
     # load and parse data
@@ -59,7 +59,7 @@ def main():
             outdir =join(wd, 'feature_stats')
             logger.info(f"Add spatial features to {event}.")
             try:
-                gdf, _, _ = model_utils.load_raw_data(indir, data_utils.default_features, TEMPORAL, BINARY, subset=event)
+                gdf, _, _ = model_utils.load_raw_data(indir, data_utils.default_features, TEMPORAL, BINARY, subset="feature_stats")
                 print(f"gdf length afer loading: {len(gdf)} cells\n")
                 gdf = data_utils.add_spatial_features(gdf, [event], data_utils.spatial_features, outdir, recalculate_neighbours=RECALCULATE_NEIGHBOURS, recalculate=RECALCULATE, verbose=VERBOSE)
                 print(f"gdf length after adding spatial features: {len(gdf)} cells\n")

@@ -887,7 +887,6 @@ class Event:
 
     def get_soilcarbon(self, subregion, recalculate=False):
         """Get soil organic carbon from Google Earth Engine."""
-
         feature_gdf = self.get_feature_gdf(subregion)
         if "soilcarbon" not in feature_gdf or recalculate:
             self.logger.info("Calculating soil carbon...")
@@ -904,7 +903,8 @@ class Event:
                 # Add reducer output to the Features in the collection
                 soilcarbon.projection().getInfo()
                 mean_soilcarbon = soilcarbon.reduceRegions(collection=grid_ee,
-                                                         reducer=ee.Reducer.mean(), scale=self.gridsize)
+                                                           reducer=ee.Reducer.mean(),
+                                                           scale=self.gridsize)
 
                 sc_dict = mean_soilcarbon.getInfo()
                 soilcarbon_list = [feature['properties'].get('mean', np.nan) for feature in sc_dict['features']]
@@ -1075,7 +1075,7 @@ class Event:
             self.logger.info("Calculating exclusion mask...")
 
             try:
-                feature_gdf['exclusion_mask'] = [np.nan] * len(feature_gdf)
+                feature_gdf['exclusion_mask'] = [0] * len(feature_gdf)
                 filepath = join(self.wd, "exclusion_mask.gpkg")
                 if exists(filepath):
                     feature_gdf = self._feature_gdf[subregion]
