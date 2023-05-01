@@ -109,9 +109,10 @@ class Event:
         
         current_dataset  = pd.read_csv(join(self.bd, 'csvs', 'current_datasets.csv'),
                                             index_col=['event', 'region']).loc[(self.storm, self.region)]
-        self.acquisition_time = current_dataset['acquisition_time']
+        
+        self.acquisition_time = current_dataset['acquisition_time'].values[0]
         self.year = int(self.enddate[:4])
-        self.sid = current_dataset['sid']
+        self.sid = current_dataset['sid'].values[0]
 
         self.aoi_pm = [None] * nsubregions
         self.aoi_lonlat = [None] * nsubregions
@@ -129,8 +130,9 @@ class Event:
 
         self._connected_to_gee = -1
 
-        self.get_flood()
         self.get_aoi()
+        self.get_flood()
+        self.make_grids()
 
 
     def __repr__(self):
@@ -138,6 +140,7 @@ class Event:
                 "-------------------------------\n"
 
         for subregion, feature_gdf in enumerate(self._feature_gdf):
+            print(f"Acquisition time: {self.acquisition_time}")
             if feature_gdf is not None:
                 field_info = f"subregion {subregion} fields: {[*feature_gdf.columns]}\n"
                 string += field_info
@@ -147,132 +150,30 @@ class Event:
         return string
 
 
-    def get_gdf(self, subregion, recalculate=False):
-        """Load pre-existing gdf or create one if recalculating or doesn't exist."""
-        grid_lonlat = self.grid_lonlat[subregion]
-        assert grid_lonlat is not None, "Need to call Event.make_grids() first."
+    def process_all_subregions(self, recalculate_all=False, recalculate_features=False, feature_list=None):
+        """Process all subregions and save to feature_stats directory."""
 
-        if recalculate:
-            self.logger.info("Recalculating shapefile...")
-            feature_gdf = gpd.GeoDataFrame(grid_lonlat)
-            feature_gdf["storm"] = [self.storm] * len(feature_gdf)
-            feature_gdf["region"] = [self.region] * len(feature_gdf)
-            feature_gdf["subregion"] = [subregion] * len(feature_gdf)
+        for subregion in range(self.nsubregions):
+            self.logger.info(f'\nProcessing subregion {subregion}\n')
+            self.get_all_features(subregion, recalculate_all=recalculate_all,
+                                  recalculate_features=recalculate_features,
+                                  feature_list=feature_list)
+            self.logger.info(f"Finished processing Storm {self.storm.capitalize()} in "\
+                         f"{self.region.capitalize()}, subregion {subregion}.")
 
-            feature_gdf = feature_gdf.set_crs("EPSG:4326")
-            self._feature_gdf[subregion] = feature_gdf
-            self.save_gdf(subregion)
-        else:
-            file = join(self.wd, f'feature_stats_{subregion}.parquet')
-            self.logger.info(f"Looking for {file}")
-            try:
-                self._feature_gdf[subregion] = gpd.read_parquet(file)
-                self.logger.info(f"Loaded existing shapefile {file}...")
-            except:
-                self.logger.info("No shapefile exists, creating new one...")
-                feature_gdf = gpd.GeoDataFrame(grid_lonlat)
-                feature_gdf["storm"] = [self.storm] * len(feature_gdf)
-                feature_gdf["region"] = [self.region] * len(feature_gdf)
-                feature_gdf["subregion"] = [subregion] * len(feature_gdf)
 
-                feature_gdf = feature_gdf.set_crs("EPSG:4326")
-                self._feature_gdf[subregion] = feature_gdf
-                self.save_gdf(subregion)
+    def get_all_features(self, subregion, recalculate_all=False, recalculate_features=False, feature_list=None):
+        """Get all features (or a subset given by feature_list) for the subregion."""
+        if feature_list is None:
+            feature_list = default_features
+
+        # get a GeoDataFrame
+        self.get_gdf(subregion, recalculate=recalculate_all)
+        for feature in feature_list:
+            print(f"Getting {feature}")
+            getattr(self, f"get_{feature}")(subregion, recalculate_features)
+
     
-
-    def save_gdf(self, subregion):
-        """Save/update the GeoDataFrame as a GeoParquet file."""
-        feature_gdf = self.get_feature_gdf(subregion)
-        assert len(feature_gdf) == 64 * 64, f"Grid not of size 64x64"
-        file = join(self.wd, f'feature_stats_{subregion}.parquet')
-        feature_gdf.to_parquet(file)
-        self.logger.info(f"Saved as {file}...\n")
-
-
-    def get_grid(self, subregion):
-        """Make spatial grid from geoJSON file for given subregion."""
-
-        # grab approx. aois from geoJSON file
-        geoJSON = literal_eval(pd.read_csv(join(self.bd, "csvs", "current_datasets.csv"),
-                                           index_col="region").loc[self.region]['subregion_geojsons'])
-        poly = [shape(x['geometry']) for x in geoJSON['features']]
-        poly = gpd.GeoDataFrame({"geometry": poly[subregion]}, index=[0])
-        poly = poly.set_crs("EPSG:4326").to_crs("EPSG:3857").geometry[0]
-
-        # construct aoi polygon of standard 32x32 km size
-        (x, y) = (poly.centroid.x, poly.centroid.y)
-        dx = 16000
-        dy = 16000
-        poly = box(x - dx, y - dy, x + dx, y + dy)
-        aoi_pm = gpd.GeoDataFrame({"geometry": poly}, index=[0], crs="EPSG:3857")
-        aoi_lonlat = aoi_pm.to_crs("EPSG:4326")
-
-        # create a grid over the aoi
-        grid_pm = make_grid(*aoi_pm.total_bounds, length=self.gridsize, wide=self.gridsize)
-        grid_lonlat = grid_pm.to_crs("EPSG:4326")
-
-        # redefine aoi to make sure aoi and grid are totally aligned
-        aoi_pm = gpd.GeoDataFrame({'geometry': grid_pm.unary_union}, index=[0], crs='EPSG:3857')
-        aoi_lonlat = aoi_pm.to_crs("EPSG:4326")
-
-        # save the grid
-        grid_lonlat.to_parquet(join(self.wd, f'grid_lonlat_{subregion}.parquet'))
-
-        # set all instance variables
-        self.aoi_pm[subregion] = aoi_pm
-        self.aoi_lonlat[subregion] = aoi_lonlat
-        self.grid_pm[subregion] = grid_pm
-        self.grid_lonlat[subregion] = grid_lonlat
-
-
-    def make_grids(self):
-        """Calculate the grid for all subregions of an event."""
-        for n in self.subregions:
-            self.get_grid(n)
-
-    def get_feature_gdf(self, subregion):
-        if self._feature_gdf[subregion] is None:
-            self.get_gdf(subregion)
-        return self._feature_gdf[subregion]
-    
-    def get_flood(self):
-        """Load Copernicus EMS flood polygon."""
-        if self._flood is None:
-            flood = gpd.read_file(join(self.wd, "flood.gpkg")).to_crs('EPSG:4326')
-            if exists(join(self.wd, "hydrographyA.gpkg")):
-                pwater = gpd.read_file(join(self.wd, "hydrographyA.gpkg"))
-                trueflood = gpd.overlay(flood, pwater, how="difference")
-            else:
-                trueflood = flood
-            self._flood = trueflood
-        return self._flood
-
-
-    def get_aoi(self):
-        if self._aoi_event is None:
-            self._aoi_event = gpd.read_file(join(self.wd, "areaOfInterest.gpkg")).to_crs('EPSG:4326')
-        return self._aoi_event
-
-
-    def get_oceanmask(self):
-        """Get ocean mask for the area of interest."""
-        if self._oceanmask is None:
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", category=RuntimeWarning)
-                aoi = self.get_aoi()
-                self._oceanmask = gpd.read_parquet(join(self.bd, 'openstreetmap', 'water-osm.parquet')).to_crs(4326).clip(mask=aoi)
-        return self._oceanmask
-        
-    def get_coastline(self):
-            """Get coastline for the area of interest."""
-            if self._coastline is None:
-                with warnings.catch_warnings():
-                    warnings.filterwarnings("ignore", category=RuntimeWarning)
-                    aoi = self.get_aoi()
-                    self._coastline = gpd.read_parquet(join(self.bd, 'openstreetmap', 'coastlines-osm.parquet')).to_crs(4326).clip(mask=aoi)
-            return self._coastline
-    
-
     def get_floodfrac(self, subregion, recalculate=False, cols=['det_method', 'obj_desc']):
         """Calculate flood fraction per gridcell."""
 
@@ -310,47 +211,6 @@ class Event:
             # save the feature_stats shapefile with flood fraction
             self._feature_gdf[subregion] = feature_gdf
             self.save_gdf(subregion)
-
-
-    def start_gee(self, subregion):
-        """Initialize Google Earth Engine with service account."""
-        if self._connected_to_gee != subregion:
-            # workaround to solve conflict with collections
-            self.logger.info("Connecting to Google Earth Engine...\n")
-            import collections
-            collections.Callable = collections.abc.Callable
-
-            # initialize GEE
-            try:
-                ee.Initialize()
-            except:
-                service_account = "hybrid-models@hybridmodels-354115.iam.gserviceaccount.com"
-                credentials = ee.ServiceAccountCredentials(service_account, join("gcloud_keys", ".hybridmodels-354115-e71f122c7f06.json"))
-                ee.Initialize(credentials)
-
-            self._connected_to_gee = subregion
-
-            aoi_lonlat = self.aoi_lonlat[subregion]
-            grid_lonlat = self.grid_lonlat[subregion]
-
-            # convert aoi to a GEE Feature Collection
-            aoi_ee = ee.Geometry.Polygon(aoi_lonlat.geometry[0].__geo_interface__["coordinates"],
-                                        proj=ee.Projection('EPSG:4326'))
-            location = aoi_ee.centroid().coordinates().getInfo()[::-1]
-
-            # convert grid to a GEE Feature Collection
-            features = []
-            for geom in grid_lonlat.geometry:
-                poly = ee.Geometry.Polygon(geom.__geo_interface__['coordinates'],
-                                    proj=ee.Projection('EPSG:4326'))
-                features.append(poly)
-
-            grid_ee = ee.FeatureCollection(features)
-            self.logger.info(f"Grid size: {grid_ee.size().getInfo()}")
-
-            self.aoi_ee[subregion] = aoi_ee
-            self.location[subregion] = location
-            self.grid_ee[subregion] = grid_ee
     
     
     def get_gebco(self, subregion, recalculate=False):
@@ -598,21 +458,26 @@ class Event:
             self.save_gdf(subregion)
 
 
-    def get_coast_dists(self, subregion, recalculate=False):
+    def get_coast_dists(self, subregion, recalculate=False, save=True):
         """Calculate cell distances and slopes to nearest coastal water."""
         feature_gdf = self.get_feature_gdf(subregion)
         if "dist_coast" not in feature_gdf or recalculate:
             self.logger.info(f"Recalculating distances to coastline with using OSM coastline.")
-            feature_gdf = self._feature_gdf[subregion]
-            aoi_pm = self.aoi_pm[subregion]
             try:
                 if "elevation" not in feature_gdf:
                     self.get_elevation(subregion)
 
                 coastline = self.get_coastline().to_crs(3857)
-                feature_gdf['dist_coast'] = inline_function_wrapper(feature_gdf.to_crs(3857), coastline.unary_union, 'distance')
-                feature_gdf['slope_coast'] = (feature_gdf['elevation'] / feature_gdf['dist_coast']).replace(-np.inf, 0.0).replace(np.inf, 0.0)
-
+                ocean = self.get_oceanmask().to_crs(3857)
+                feature_gdf['dist_coast'] = inline_function_wrapper(feature_gdf.to_crs(3857), attr_wrapper(coastline, "unary_union"), 'distance')
+                feature_gdf['ocean'] = inline_function_wrapper(feature_gdf.to_crs(3857), attr_wrapper(ocean, "unary_union"), 'intersects')
+                ocean_idx = feature_gdf[feature_gdf['ocean']].index
+                feature_gdf.loc[ocean_idx, 'dist_coast'] = -1 * feature_gdf.loc[ocean_idx, 'dist_coast']
+                # get slope
+                feature_gdf['slope_coast'] = (feature_gdf['elevation'] / feature_gdf['dist_coast'])
+                feature_gdf['slope_coast'] = feature_gdf['slope_coast'].replace(-np.inf, 0.0)
+                feature_gdf['slope_coast'] = feature_gdf['slope_coast'].replace(np.inf, 0.0)
+                feature_gdf['slope_coast'] = feature_gdf['slope_coast'].replace(np.nan, 0.0)
             except Exception as e:
                 self.logger.warning(f"Error for dist_coast and slope_coast for {self.storm}, {self.region}, {subregion}:"\
                                     f"{e}\nCreating empty fields.")
@@ -621,7 +486,8 @@ class Event:
 
             # save to gdf
             self._feature_gdf[subregion] = feature_gdf
-            self.save_gdf(subregion)
+            if save:
+                self.save_gdf(subregion)
 
     
     def get_pw_dists(self, subregion, recalculate=False, thresh=pwater_thresh):
@@ -809,7 +675,7 @@ class Event:
                                             f"{e}\nCreating empty field.")
                         feature_gdf[feature_name] = [np.nan] * len(feature_gdf)
         else:
-            self.logger.info(f"{self.storm}, {self.region} outside of ERA5 time range:"\
+            self.logger.info(f"{self.storm.capitalize()}, {self.region} outside of ERA5 time range:"\
                             f"\nCreating empty field.")
             for feature_name in feature_names:
                 feature_gdf[feature_name] = [np.nan] * len(feature_gdf)
@@ -1096,28 +962,178 @@ class Event:
             self.save_gdf(subregion)
 
 
-    def process_all_subregions(self, recalculate_all=False, recalculate_features=False, feature_list=None):
-        """Process all subregions and save to feature_stats directory."""
+    def get_feature_gdf(self, subregion):
+        if self._feature_gdf[subregion] is None:
+            self.get_gdf(subregion)
+        return self._feature_gdf[subregion]
+    
 
-        for subregion in range(self.nsubregions):
-            self.logger.info(f'\nProcessing subregion {subregion}\n')
-            self.get_all_features(subregion, recalculate_all=recalculate_all,
-                                  recalculate_features=recalculate_features,
-                                  feature_list=feature_list)
-            self.logger.info(f"Finished processing Storm {self.storm.capitalize()} in "\
-                         f"{self.region.capitalize()}, subregion {subregion}.")
+    def get_gdf(self, subregion, recalculate=False):
+        """Load pre-existing gdf or create one if recalculating or doesn't exist."""
+        if self._feature_gdf[subregion] is None:
+            grid_lonlat = self.grid_lonlat[subregion]
+
+            if recalculate:
+                self.logger.info("Recalculating shapefile...")
+                feature_gdf = gpd.GeoDataFrame(grid_lonlat)
+                feature_gdf["storm"] = [self.storm] * len(feature_gdf)
+                feature_gdf["region"] = [self.region] * len(feature_gdf)
+                feature_gdf["subregion"] = [subregion] * len(feature_gdf)
+
+                feature_gdf = feature_gdf.set_crs("EPSG:4326")
+                self._feature_gdf[subregion] = feature_gdf
+                self.save_gdf(subregion)
+            else:
+                file = join(self.wd, f'feature_stats_{subregion}.parquet')
+                self.logger.info(f"Looking for {file}")
+                try:
+                    self._feature_gdf[subregion] = gpd.read_parquet(file)
+                    self.logger.info(f"Loaded existing shapefile {file}...")
+                except:
+                    self.logger.info("No shapefile exists, creating new one...")
+                    feature_gdf = gpd.GeoDataFrame(grid_lonlat)
+                    feature_gdf["storm"] = [self.storm] * len(feature_gdf)
+                    feature_gdf["region"] = [self.region] * len(feature_gdf)
+                    feature_gdf["subregion"] = [subregion] * len(feature_gdf)
+
+                    feature_gdf = feature_gdf.set_crs("EPSG:4326")
+                    self._feature_gdf[subregion] = feature_gdf
+                    self.save_gdf(subregion)
+    
+
+    def save_gdf(self, subregion):
+        """Save/update the GeoDataFrame as a GeoParquet file."""
+        feature_gdf = self.get_feature_gdf(subregion)
+        assert len(feature_gdf) == 64 * 64, f"Grid not of size 64x64"
+        file = join(self.wd, f'feature_stats_{subregion}.parquet')
+        feature_gdf.to_parquet(file)
+        self.logger.info(f"Saved as {file}...\n")
 
 
-    def get_all_features(self, subregion, recalculate_all=False, recalculate_features=False, feature_list=None):
-        """Get all features (or a subset given by feature_list) for the subregion."""
-        if feature_list is None:
-            feature_list = default_features
+    def get_grid(self, subregion):
+        """Make spatial grid from geoJSON file for given subregion."""
 
-        # get a GeoDataFrame
-        self.get_gdf(subregion, recalculate=recalculate_all)
-        for feature in feature_list:
-            print(f"Getting {feature}")
-            getattr(self, f"get_{feature}")(subregion, recalculate_features)
+        # grab approx. aois from geoJSON file
+        geoJSON = literal_eval(pd.read_csv(join(self.bd, "csvs", "current_datasets.csv"),
+                                           index_col="region").loc[self.region]['subregion_geojsons'])
+        poly = [shape(x['geometry']) for x in geoJSON['features']]
+        poly = gpd.GeoDataFrame({"geometry": poly[subregion]}, index=[0])
+        poly = poly.set_crs("EPSG:4326").to_crs("EPSG:3857").geometry[0]
+
+        # construct aoi polygon of standard 32x32 km size
+        (x, y) = (poly.centroid.x, poly.centroid.y)
+        dx = 16000
+        dy = 16000
+        poly = box(x - dx, y - dy, x + dx, y + dy)
+        aoi_pm = gpd.GeoDataFrame({"geometry": poly}, index=[0], crs="EPSG:3857")
+        aoi_lonlat = aoi_pm.to_crs("EPSG:4326")
+
+        # create a grid over the aoi
+        grid_pm = make_grid(*aoi_pm.total_bounds, length=self.gridsize, wide=self.gridsize)
+        grid_lonlat = grid_pm.to_crs("EPSG:4326")
+
+        # redefine aoi to make sure aoi and grid are totally aligned
+        aoi_pm = gpd.GeoDataFrame({'geometry': grid_pm.unary_union}, index=[0], crs='EPSG:3857')
+        aoi_lonlat = aoi_pm.to_crs("EPSG:4326")
+
+        # save the grid
+        grid_lonlat.to_parquet(join(self.wd, f'grid_lonlat_{subregion}.parquet'))
+
+        # set all instance variables
+        self.aoi_pm[subregion] = aoi_pm
+        self.aoi_lonlat[subregion] = aoi_lonlat
+        self.grid_pm[subregion] = grid_pm
+        self.grid_lonlat[subregion] = grid_lonlat
+
+
+    def make_grids(self):
+        """Calculate the grid for all subregions of an event."""
+        for n in self.subregions:
+            self.get_grid(n)
+    
+
+    def get_aoi(self):
+        if self._aoi_event is None:
+            self._aoi_event = gpd.read_file(join(self.wd, "areaOfInterest.gpkg")).to_crs('EPSG:4326')
+        return self._aoi_event
+    
+
+    def get_flood(self):
+        """Load flood polygon."""
+        if self._flood is None:
+            flood = gpd.read_file(join(self.wd, "flood.gpkg")).to_crs('EPSG:4326')
+            # remove overlap with permanent water
+            if exists(join(self.wd, "hydrographyA.gpkg")):
+                pwater = gpd.read_file(join(self.wd, "hydrographyA.gpkg"))
+                trueflood = gpd.overlay(flood, pwater, how="difference")
+            else:
+                trueflood = flood
+            self._flood = trueflood
+        return self._flood
+
+
+    def get_oceanmask(self):
+        """Get ocean mask for the area of interest."""
+        if self._oceanmask is None:
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=RuntimeWarning)
+                warnings.filterwarnings("ignore", category=UserWarning)
+                aoi = self.get_aoi()
+                self._oceanmask = gpd.read_parquet(join(self.bd, 'openstreetmap', 'water-osm.parquet')).to_crs(4326).clip(mask=aoi.buffer(1))
+        return self._oceanmask
+    
+
+    def get_coastline(self):
+        """Get coastline for the area of interest."""
+        if self._coastline is None:
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=RuntimeWarning)
+                warnings.filterwarnings("ignore", category=UserWarning)
+                aoi = self.get_aoi()
+                self._coastline = gpd.read_parquet(join(self.bd, 'openstreetmap', 'coastlines-osm.parquet')).to_crs(4326).clip(mask=aoi.buffer(1))
+        return self._coastline
+    
+
+    def start_gee(self, subregion):
+        """Initialize Google Earth Engine with service account."""
+        if self._connected_to_gee != subregion:
+            # workaround to solve conflict with collections
+            self.logger.info("Connecting to Google Earth Engine...\n")
+            import collections
+            collections.Callable = collections.abc.Callable
+
+            # initialize GEE
+            try:
+                ee.Initialize()
+            except:
+                service_account = "hybrid-models@hybridmodels-354115.iam.gserviceaccount.com"
+                credentials = ee.ServiceAccountCredentials(service_account, join("gcloud_keys", ".hybridmodels-354115-e71f122c7f06.json"))
+                ee.Initialize(credentials)
+
+            self._connected_to_gee = subregion
+
+            aoi_lonlat = self.aoi_lonlat[subregion]
+            grid_lonlat = self.grid_lonlat[subregion]
+
+            # convert aoi to a GEE Feature Collection
+            aoi_ee = ee.Geometry.Polygon(aoi_lonlat.geometry[0].__geo_interface__["coordinates"],
+                                        proj=ee.Projection('EPSG:4326'))
+            location = aoi_ee.centroid().coordinates().getInfo()[::-1]
+
+            # convert grid to a GEE Feature Collection
+            features = []
+            for geom in grid_lonlat.geometry:
+                poly = ee.Geometry.Polygon(geom.__geo_interface__['coordinates'],
+                                    proj=ee.Projection('EPSG:4326'))
+                features.append(poly)
+
+            grid_ee = ee.FeatureCollection(features)
+            self.logger.info(f"Grid size: {grid_ee.size().getInfo()}")
+
+            self.aoi_ee[subregion] = aoi_ee
+            self.location[subregion] = location
+            self.grid_ee[subregion] = grid_ee
+
 
 
 
@@ -1137,6 +1153,12 @@ def inline_function_wrapper(gdf1, gdf2, function:str, warning=RuntimeWarning, *a
         output = getattr(gdf1, function)(gdf2, *args, **kwargs)
     return output
 
+def attr_wrapper(gdf, function:str, warning=RuntimeWarning):
+    """Wrapper to suppress RuntimeWarning for any class method."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=warning)
+        output = getattr(gdf, function)
+    return output
 
 
 def spatial_mean(feat, aoi_ee, gridsize):

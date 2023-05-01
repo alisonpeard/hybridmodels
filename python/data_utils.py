@@ -197,7 +197,7 @@ def add_spatial_features(gdf, events, features, wd, recalculate_neighbours=False
             return gdf_tosave
 
 
-def add_intermediate_features(feature_gdf, events, intermediate_features, wd, thresh=pwater_thresh, recalculate=False, verbose=True):
+def add_intermediate_features(feature_gdf, events, intermediate_features, wd, thresh=pwater_thresh, recalculate=False, verbose=True, save=True):
     """Calculate averages along shortest line between dry cells and permanent water.
 
     This is approximate as it is applied to the gridded dataframe rather than the
@@ -219,21 +219,19 @@ def add_intermediate_features(feature_gdf, events, intermediate_features, wd, th
     for event in (pbar1 := tqdm(events, desc='events', total=len(events))):
         if recalculate:
             if verbose: pbar1.set_description(f"Getting intermediate features for {event}...")
-            gdf_event = feature_gdf[feature_gdf.event == event]
+            assert event in feature_gdf['event'].unique(), f"Event {event} not in dataframe"
+            gdf_event = feature_gdf[feature_gdf.event == event].copy()
             feature_gdf_pm = gdf_event.to_crs("EPSG:3857").reset_index(drop=True)
-
-            # calculate max / mean of intersecting points
-            for feature, func in intermediate_features.items():
-                feature_gdf_pm[f'{feature}_to_pw'] = [np.nan] * len(feature_gdf_pm)
-
-            # assign each grid cell an empty linestring
-            feature_gdf_pm['line_to_pw'] = [LineString([Point(0, 0), Point(0,0)])] * len(feature_gdf_pm)
+            for feature, _ in intermediate_features.items():
+                feature_gdf_pm[f'{feature}_to_pw'] = [0] * len(feature_gdf_pm)
 
             # get index for all wet and dry points
             wet_points = feature_gdf_pm[feature_gdf_pm['jrc_permwa'] > thresh].index
             dry_points = feature_gdf_pm[feature_gdf_pm['jrc_permwa'] <= thresh].index
             wet_points = feature_gdf_pm['geometry'].iloc[wet_points]
             dry_points = feature_gdf_pm['geometry'].iloc[dry_points]
+            assert len(wet_points) > 0, f"No permanent water found with thresh {thresh}"
+            assert len(dry_points) > 0, "No dry land found with thresh {thresh}"
 
             # iterate through all the dry points
             for dry_index in tqdm([*dry_points.index]):
@@ -245,23 +243,24 @@ def add_intermediate_features(feature_gdf, events, intermediate_features, wd, th
                 wet_point = wet_points.iloc[wet_index].centroid
                 shortest_line = LineString([dry_point, wet_point])
 
-                # replace empty LineString with new LineString
-                feature_gdf_pm.loc[dry_index, 'line_to_pw'] = shortest_line
-
                 # find all grid cells intersecting this linestring
                 intersecting_cells = [*feature_gdf_pm[feature_gdf_pm.intersects(shortest_line)].index]
 
-                # calculate max aggregatre function of intersecting points for each feature
-                for feature, func in intermediate_features.items():
-                    feature_gdf_pm.loc[dry_index, f'{feature}_to_pw'] = func(feature_gdf_pm.loc[intersecting_cells, feature])
+                # calculate aggregate function of intersecting points for each feature
+                for feature, aggfunc in intermediate_features.items():
+                    feature_gdf_pm.loc[dry_index, f'{feature}_to_pw'] = aggfunc(feature_gdf_pm.loc[intersecting_cells, feature])
                     assert len(feature_gdf_pm) == 4096, f"Error occured adding intermediate features for {feature},"\
                                                         "GeoDataFrame is no longer correct size."
+                    
+            for feature, _ in intermediate_features.items():
+                assert feature_gdf_pm[feature].notnull().all(), "NaNs created"
 
-            del feature_gdf_pm['line_to_pw']
             gdf_tosave = feature_gdf_pm.to_crs(4326)
-
-            assert len(gdf_tosave) == 4096, "GeoDataFrame is no longer correct size."
-            gdf_tosave.to_parquet(join(wd, 'dataframes', f'{event}.parquet'))
+            if save:
+                for feature, _ in intermediate_features.items():
+                    assert feature_gdf_pm[feature].notnull().all(), "NaNs created"
+                assert len(gdf_tosave) == 4096, "GeoDataFrame is no longer correct size."
+                gdf_tosave.to_parquet(join(wd, 'dataframes', f'{event}.parquet'))
             return gdf_tosave
 
 

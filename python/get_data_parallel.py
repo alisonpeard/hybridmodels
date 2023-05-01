@@ -32,7 +32,7 @@ Use:
 # settings
 TEST_RUN = False             # check logging and multiprocessing behaving correctly (currently failing)
 FEATURE_LIST = None         # None for all features or else ['feature1', 'feature2']
-RECALCULATE_ALL = True       # false to just append to files
+RECALCULATE_ALL = False       # false to just append to files
 RECALCULATE_FEATURES = True
 KEYWORD = "yes"
 
@@ -74,10 +74,10 @@ def process_events(row, queue, configurer):
     try:
         wd = join(datadir, "storm_events", f"{storm}_{region}")
         event = Event(storm, region, nsubregions, wd, datadir)
+        print(event)
         if not TEST_RUN:
             logger.info(f"Setting up Storm {storm.capitalize()} Event instance for "\
                     f"{region.capitalize()} with {nsubregions} subregions.")
-            event.make_grids()
             event.process_all_subregions(RECALCULATE_ALL, RECALCULATE_FEATURES, FEATURE_LIST)
         else:
             logger.info(event)
