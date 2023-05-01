@@ -43,7 +43,7 @@ RECALCULATE_NEIGHBOURS = False # turn off in contingency matrices already presen
 VERBOSE = True
 TEMPORAL = False
 BINARY = True
-KEYWORD = 'spatial_2'
+KEYWORD = 'spatial_3'
 
 def main():
     # load and parse data
