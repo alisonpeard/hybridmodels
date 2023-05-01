@@ -1,6 +1,7 @@
 """
 Functions to help post-processing and modelling data.
 """
+import os
 from os.path import join, basename
 import glob
 import warnings
@@ -37,23 +38,32 @@ lulc_categories = {'built_up': ['lulc__50'],
                   }
 lulc_cols = ['lulc__20', 'lulc__30', 'lulc__40', 'lulc__50', 'lulc__60', 'lulc__70', 'lulc__80', 'lulc__90', 'lulc__95', 'lulc_100']
 
-## MAIN DATA-LOADING FUNCTIONS
-# def load_all_gdfs(wd, folder, subset=''):
-#     """Return all gdfs in a folder (and filter by subset string)."""
-#     wd = join(wd, folder)
-#     files = [filename for filename in glob.glob(join(wd, "*.parquet"))]
-#     gdfs = [gpd.read_parquet(filename) for filename in files]
-#     return gdfs
 
-# TODO:
-import os
-def load_aspatial_data(wd):
+def load_aspatial_data(wd, features, temporal=False, binary=True):
+    gdfs = load_aspatial_files(wd)
+    assert len(gdfs) > 0, f"No feature_stats*.parquet files in subdirs of {wd}. Try a different wd."
+    gdf, features, columns = format_aspatial_data(gdfs, features, temporal, binary)
+    return gdf, features, columns
+
+
+def load_spatial_data(wd):
+    gdfs = load_spatial_files(wd)
+    assert len(gdfs) > 0, f"No *.parquet files in {wd}. Try a different wd."
+    gdf = format_spatial_data(gdfs)
+    return gdf
+
+
+def load_aspatial_files(wd):
     """Load aspatial data from correct dirs, no processing.
     
     Parameters:
     -----------
     wd :
         where all storms folders are stored
+    
+    Returns:
+    --------
+        list of gpd.GeoDataFrames
     """
     gdfs = []
     for dirpath, _, _ in os.walk(wd):
@@ -63,17 +73,26 @@ def load_aspatial_data(wd):
     return gdfs
 
 
-
-# TODO:
-def load_spatial_data(wd):
-    """Load aspatial data from correct dir, no processing."""
+def load_spatial_files(wd):
+    """Load aspatial data from correct dir, no processing
+    
+    Parameters:
+    -----------
+    wd :
+        where all storms folders are stored
+    
+    Returns:
+    --------
+        list of gpd.GeoDataFrames
+    """
     gdfs = []
     files = [filename for filename in glob.glob(join(wd, "*.parquet"))]
+    gdfs = [gpd.read_parquet(filename) for filename in files]
     return gdfs
 
 
-def load_raw_data(wd, features, temporal=False, binary=True, subset='feature_stats'):
-    """Load data from feature_stats: needs some processing to be usable.
+def format_aspatial_data(gdfs, features, temporal=False, binary=True):
+    """Place to dump any formatting that needs to be done to aspatial files.
     
     Parameters:
     -----------
@@ -89,25 +108,22 @@ def load_raw_data(wd, features, temporal=False, binary=True, subset='feature_sta
         subset of events to load, use '' for all events
 
     """
-    # Load list of gdfs
+    # process winds before concatenating
     columns = features + ['storm', 'region', 'subregion', "geometry", "floodfrac"]
-    gdfs = load_all_gdfs(wd, subset=subset)
     gdfs, features, columns = process_winds(gdfs, temporal, features, columns)
 
     # one big GeoDataFrame
     gdf = pd.concat(gdfs)
-    gdf.attrs['transforms'] = {}
     gdf, columns = format_event_col(gdf, columns)
-    
-    if binary:
-        gdf, features, columns = binarise_feature(gdf, 'floodfrac', 'floodfrac', data_utils.floodthresh, features, columns)
-        gdf.attrs['transforms']['floodfrac'] = 'binarised flood fraction'
-
+    if binary: gdf, features, columns = binarise_feature(gdf, 'floodfrac', 'flood', data_utils.floodthresh, features, columns)
     gdf = gdf.replace("", np.nan)
-    features_binary, _ = data_utils.split_features_binary_continuous(data_utils.binary_keywords, features)
 
+    
+
+    # one hot encode lulc data
+    features_binary, _ = data_utils.split_features_binary_continuous(data_utils.binary_keywords, features)
     if 'lulc' in features:
-        gdf, features, _, columns, _ = one_hot_encode_feature(gdf, 'lulc', features_binary, features, columns)
+        gdf, features, _, columns = one_hot_encode_feature(gdf, 'lulc', features_binary, features, columns)
         for lulc_col in lulc_cols:
             if lulc_col not in [*gdf.columns]:
                 gdf[lulc_col] = [0] * len(gdf)
@@ -118,21 +134,9 @@ def load_raw_data(wd, features, temporal=False, binary=True, subset='feature_sta
     return gdf, features, columns
 
 
-def load_spatial_data(wd, subset='', intermediate_features=True):
-    """Load data with all features from feature_stats_spatial."""
-    gdfs = load_all_gdfs(wd, subset)
+def format_spatial_data(gdfs):
+    """Place to dump any formatting that needs to be done to aspatial files."""
     gdf = pd.concat(gdfs)
-
-
-    # TODO: delete these if working ok
-    # fixes for issues with spatial data (can get rid of this after re-run)
-    # if intermediate_features:
-    #     intermediate_features = [*data_utils.intermediate_features.keys()]
-    #     intermediate_features = [f"{feat}_to_pw" for feat in intermediate_features]
-    #     gdf[intermediate_features] = gdf[intermediate_features].replace(np.nan, 0.0)
-
-    # gdf['exclusion_mask'] = gdf['exclusion_mask'].replace(np.nan, 0.0)
-
     return gdf
 
 
@@ -419,7 +423,7 @@ def normalise_feature(gdf: gpd.GeoDataFrame, feature: str):
     return gdf
 
 
-def one_hot_encode_feature(gdf, feature, features_binary, features, columns, notes=[]):
+def one_hot_encode_feature(gdf, feature, features_binary, features, columns):
     """One-hot encode a binary features, update binary features lists."""
 
     # cast all to string to make sure no duplicate columns
@@ -434,8 +438,8 @@ def one_hot_encode_feature(gdf, feature, features_binary, features, columns, not
     features_binary += cols
     columns.remove(feature)
     columns += cols
-    notes.append(f'One-hot encoded {feature}.')
-    return gdf, list(set(features)), list(set(features_binary)), list(set(columns)), notes
+
+    return gdf, list(set(features)), list(set(features_binary)), list(set(columns))
 
 
 """Functions for pre-processing the data."""
